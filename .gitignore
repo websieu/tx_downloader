@@ -1,0 +1,12 @@
+*.txt
+*.json
+projects/
+output/
+dist/
+build/
+*.egg-info/
+*.pyc
+__pycache__/
+cloud
+*.exe
+*.spec
