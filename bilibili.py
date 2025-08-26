@@ -95,7 +95,7 @@ def main(fm: FirestoreManager):
     remove_folder(f"projects/{video['video_id']}")
 
 def loop_firebase():
-    service_account_path = "F:\\Code\\AI\\Auto-Youtube\\auth_files\\firebase.json"
+    service_account_path = "auth_files/firebase.json"
 
     # Create an instance of FirestoreManager.
     #video_type = 'audio'

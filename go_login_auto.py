@@ -97,7 +97,9 @@ def start_fetch_book(url):
         if(os.path.exists(output_file)):
             print(f"File {output_file} already exists. Skipping fetch.")
             return True
-        md = ManageDriver(gl_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE")
+        token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE'
+        port = 3800
+        md = ManageDriver(gl_token=token, port=port)
         md.start_gl(gl_profile="6875c69a1c72b789edb8c784")
         md.create_driver(url)
         data = md.script_get("fetch.js")
@@ -122,7 +124,7 @@ def start_fetch_book(url):
 def get_download_link(url, retry=0):
     try:
         md = ManageDriver(gl_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE")
-        md.start_gl(gl_profile="6875c69a1c72b789edb8c784")
+        md.start_gl(gl_profile="68ad58cce5474c03dfaf9064")
         md.create_driver("https://greenvideo.cc/")
         
         #md.driver.goto(url)
@@ -158,6 +160,6 @@ def get_download_link(url, retry=0):
         
 
 if __name__ == "__main__":
-    get_download_link("https://www.bilibili.com/video/BV1Fk4y1Q7jS/?spm_id_from=333.788.recommend_more_video.9")
+    get_download_link("https://www.bilibili.com/video/BV1zC4y1S7tk")
 
     
