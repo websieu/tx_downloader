@@ -38,7 +38,7 @@ class Browser:
     def goto(self, url):
         self.page.goto(url)
     
-    def execute_script(self, script):
-        return self.page.evaluate(script)
+    def execute_script(self, script, args=None):
+        return self.page.evaluate(script, args)
     
         

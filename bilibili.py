@@ -4,7 +4,9 @@ import time
 
 import firebase_admin
 
-from go_login_auto import start_fetch_book
+from go_login_auto import get_download_link, start_fetch_book
+from lib.data import download_with_wget, download_zip
+from lib.download_safe import download_with_resume
 from lib.firebase_db import FirestoreManager
 from lib.telegram import send_telegram_message
 from lib.upload_hg import upload_to_hg
@@ -50,7 +52,7 @@ def main(fm: FirestoreManager):
 
     send_telegram_message(f"Downloading video {video['video_id']}")
 
-    download_result = start_fetch_book(video['bili_link'])
+    download_result = get_download_link(video['bili_link'])
     
     if not download_result:
         print(f"Failed to download video: {video['video_id']}")
@@ -58,12 +60,22 @@ def main(fm: FirestoreManager):
         send_telegram_message(f"Failed to download video: {video['video_id']}")
         return None
     else:
-        send_telegram_message(f"Video {video['video_id']} downloaded successfully.")
+        send_telegram_message(f"Video {video['video_id']} fetched successfully.")
+
+    print(f"Downloading video from URL: {download_result}")
+    result = download_with_resume(download_result, f"projects/{video['video_id']}/{video['video_id']}.mp4")
+    if not result:
+        print(f"Failed to save video: {video['video_id']}")
+        fm.update_video(video['video_id'], {"process_status": "failed"})
+        send_telegram_message(f"Failed to save video: {video['video_id']}")
+        return None
+    else:
+        send_telegram_message(f"Video {video['video_id']} saved successfully.")
 
     channel_dataset = channel['hg_dataset']
     upload = upload_to_hg(
-        file_path=f"projects/{video['video_id']}/{video['video_id']}.txt",
-        name_in_hg=f"{video['video_id']}.txt",
+        file_path=f"projects/{video['video_id']}/{video['video_id']}.mp4",
+        name_in_hg=f"{video['video_id']}.mp4",
         repo_id=channel_dataset
     )
     if not upload:

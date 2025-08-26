@@ -173,6 +173,7 @@ class FirestoreManager:
             return None
         except Exception as e:
             print(f"not found channel to process with error: {e}")
+            
             return None
 
 
@@ -203,6 +204,7 @@ class FirestoreManager:
         except Exception as e:
             print(e)
             return False
+
 
     def select_channel_by_list(self, video_type, list_channel):
         try:

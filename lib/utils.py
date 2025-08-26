@@ -2,6 +2,7 @@ import os
 import json
 import re
 import shutil
+import urllib.parse as up
 
 def get_config_value(config_name: str, config_path: str = 'config.json') -> str:
     """
@@ -51,6 +52,35 @@ TRANS_MODEL = get_config_value("trans_model")
 VIDEO_TYPE = get_config_value("video_type")
 SYNC_DURATION = int(get_config_value("sync_duration"))
 LEONARDO_API = get_config_value("leonardo_api")
+
+def get_video_id(url: str) -> str:
+    """
+    Lấy ID video BiliBili kèm số phần (p).
+    
+    Ví dụ
+    -------
+    >>> get_video_id("https://www.bilibili.com/video/BV1EK4y1b7B1?p=3")
+    'BV1EK4y1b7B1_3'
+    >>> get_video_id("https://www.bilibili.com/video/BV1EK4y1b7B1")
+    'BV1EK4y1b7B1_1'
+    """
+    # ‣ Phân tách URL một lần để dùng cho cả ID & query
+    parsed = up.urlparse(url)
+    
+    # ‣ Lấy video ID (BV… hoặc av…)
+    m = re.search(r'(BV\w+|av\d+)', parsed.path)
+    if m:
+        vid = m.group(1)
+    else:
+        # fallback: lấy segment cuối của path (bỏ / và query)
+        vid = parsed.path.rstrip('/').split('/')[-1] or 'unknown'
+    
+    # ‣ Lấy tham số p (page index), mặc định 1
+    qs = up.parse_qs(parsed.query)
+    p = qs.get('p', ['1'])[0] or '1'
+    
+    return f'{vid}_{p}'
+
 
 def get_book_id(url: str) -> str:
     """

@@ -15,11 +15,13 @@ def get_and_save_token(token_file):
     flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
         CLIENT_SECRETS_FILE, SCOPES)
     creds = flow.run_local_server(port=0)
-    
+    output_dir = "tokens"
+    os.makedirs(output_dir, exist_ok=True)
+    token_path = os.path.join(output_dir, token_file)
     # Save the credentials to the token file
-    with open(token_file, "w") as f:
+    with open(token_path, "w") as f:
         f.write(creds.to_json())
-    print(f"Token saved to {token_file}")
+    print(f"Token saved to {token_path}")
 
 if __name__ == '__main__':
     token_file = input("Enter token file name (e.g. token.json): ").strip()

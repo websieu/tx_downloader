@@ -10,6 +10,8 @@ import re
 from selenium.common.exceptions import WebDriverException
 from pathlib import Path
 
+from lib.utils import get_video_id
+
 class ManageDriver:
     def __init__(self, gl_token="", port=3600):
        
@@ -20,16 +22,20 @@ class ManageDriver:
 
     
     def start_gl(self, gl_profile):
-        print("start profile: "+gl_profile)
-        gl = GoLogin({
-            'token': self.gl_token,
-            'profile_id': gl_profile,
-            'port': self.port,
-        })
-        self.gl_profile = gl_profile
-        self.gl = None
-        self.gl = gl
-        self.gl.start()
+        try:
+            print("start profile: "+gl_profile)
+            gl = GoLogin({
+                'token': self.gl_token,
+                'profile_id': gl_profile,
+                'port': self.port,
+            })
+            self.gl_profile = gl_profile
+            self.gl = None
+            self.gl = gl
+            self.gl.start()
+        except Exception as e:
+            print("Error starting GoLogin:")
+            print(e)
     def create_driver(self, url):
         try:
             if(self.driver):
@@ -49,12 +55,12 @@ class ManageDriver:
                 self.gl.stop()
             self.driver = None
 
-    def script_get(self, js_path: str = "fetch.js"):
+    def script_get(self, js_path: str = "fetch.js", args=None):
         js_code = Path(js_path).read_text(encoding="utf-8")
         # set timeout cho async script
         #self.driver.set_script_timeout(timeout)
         # Truyền URL qua arguments[0] (trong JS)
-        data_fr = self.driver.execute_script(js_code)
+        data_fr = self.driver.execute_script(js_code, args)
         return data_fr
 
     def set_item_id(self, item_id):
@@ -109,10 +115,49 @@ def start_fetch_book(url):
     except Exception as e:
         print("An error occurred while fetching the book:")
         print(e)
-        if md:
-            md.close_all()
+        # if md:
+        #     md.close_all()
         return False
 
+def get_download_link(url, retry=0):
+    try:
+        md = ManageDriver(gl_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE")
+        md.start_gl(gl_profile="6875c69a1c72b789edb8c784")
+        md.create_driver("https://greenvideo.cc/")
+        
+        #md.driver.goto(url)
+        username_input = md.driver.page.locator("//*[@id='__nuxt']/div[1]/div/div[2]/div/div[1]/div[1]/input")
+        username_input.fill(url)
+        
+        submit_button = md.driver.page.locator("//*[@id='__nuxt']/div[1]/div/div[2]/button")
+        submit_button.click()
+        md.driver.page.locator("//*[@id='__nuxt']/div[1]/div/div[3]/div[1]/div/div/div").wait_for(state="attached", timeout=1000*3*60)
+
+        js_text = Path("fetch_download.js").read_text(encoding="utf-8")
+        video_id = get_video_id(url)
+        if video_id.endswith("_1"):
+            video_id = video_id[:-2]
+        data_fr = md.driver.page.evaluate(js_text, {"args": video_id})
+        data_check = data_fr.get("data", "")
+        url_download = data_check.get("downloadUrl", "")
+        md.close_all()
+        return url_download
+        
+    except Exception as e:
+        print("An error occurred while fetching the download link:")
+        print(e)
+        if md:
+            md.close_all()
+        if retry < 3:
+            print(f"Retrying... ({retry+1})")
+            time.sleep(10)
+            return get_download_link(url, retry+1)
+        else:
+            
+            return False
+        
 
 if __name__ == "__main__":
-    start_fetch_book("https://www.69shuba.com/book/89816/")
+    get_download_link("https://www.bilibili.com/video/BV1Fk4y1Q7jS/?spm_id_from=333.788.recommend_more_video.9")
+
+    
