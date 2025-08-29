@@ -52,7 +52,9 @@ TRANS_MODEL = get_config_value("trans_model")
 VIDEO_TYPE = get_config_value("video_type")
 SYNC_DURATION = int(get_config_value("sync_duration"))
 LEONARDO_API = get_config_value("leonardo_api")
-
+GO_LOGIN_TOKEN = get_config_value("go_login_token")
+REMOTE_PORT = int(get_config_value("remote_port"))
+GL_PROFILE = get_config_value("gl_profile")
 def get_video_id(url: str) -> str:
     """
     Lấy ID video BiliBili kèm số phần (p).

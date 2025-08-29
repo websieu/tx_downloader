@@ -10,7 +10,7 @@ import re
 from selenium.common.exceptions import WebDriverException
 from pathlib import Path
 
-from lib.utils import get_video_id
+from lib.utils import GL_PROFILE, GO_LOGIN_TOKEN, REMOTE_PORT, get_video_id
 
 class ManageDriver:
     def __init__(self, gl_token="", port=3600):
@@ -97,10 +97,10 @@ def start_fetch_book(url):
         if(os.path.exists(output_file)):
             print(f"File {output_file} already exists. Skipping fetch.")
             return True
-        token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE'
-        port = 3800
-        md = ManageDriver(gl_token=token, port=port)
-        md.start_gl(gl_profile="6875c69a1c72b789edb8c784")
+        # token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE'
+        # port = 3800
+        md = ManageDriver(gl_token=GO_LOGIN_TOKEN, port=REMOTE_PORT)
+        md.start_gl(gl_profile=GL_PROFILE)
         md.create_driver(url)
         data = md.script_get("fetch.js")
         data = "".join(data)
@@ -123,7 +123,7 @@ def start_fetch_book(url):
 
 def get_download_link(url, retry=0):
     try:
-        md = ManageDriver(gl_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE")
+        md = ManageDriver(gl_token=GO_LOGIN_TOKEN, port=REMOTE_PORT)
         md.start_gl(gl_profile="68ad58cce5474c03dfaf9064")
         md.create_driver("https://greenvideo.cc/")
         
