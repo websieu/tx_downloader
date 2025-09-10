@@ -11,7 +11,7 @@
 
   if (!ul) {
     console.warn('Không tìm thấy UL theo XPath //*[@id="catalog"]/ul');
-    return;
+    return "error"
   }
 
   /* ---------- 2) Thu thập & sắp xếp chapterId ---------- */
@@ -92,6 +92,7 @@
         var text = node.textContent.trim();
         var text = text.replace('(本章完)',''); // Xóa số chương đầu nếu có
         var text = text.replace('loadAdv(3, 0);',''); // Xóa số chương đầu nếu có
+        var text = text.replace('loadAdv(7, 3);',''); // Xóa số chương đầu nếu có
 
         results.push(text);                                   // hoặc {id: chapId, text}
         console.log(text.slice(0, 50), '...'); // Hiển thị 50 ký tự đầu

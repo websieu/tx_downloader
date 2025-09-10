@@ -1,3 +1,4 @@
+import traceback
 from playwright.sync_api import sync_playwright
 class Browser:
     def __init__(self, debug="http://127.0.0.1:3500"):
@@ -5,7 +6,14 @@ class Browser:
         # Connect to the running Chrome instance
         if(not debug.startswith("http")):
             debug = f"http://{debug}"
-        browser = self.playwright.chromium.connect_over_cdp(debug)
+        try:
+            browser = self.playwright.chromium.connect_over_cdp(debug)
+        
+        except Exception as e:
+            print("Error connecting to browser:")
+            traceback.print_exc()
+            self.playwright.stop()
+            raise e
         
         # Get the existing browser context
         context = browser.contexts[0]
@@ -33,6 +41,7 @@ class Browser:
     def close(self):
        self.page.close()
        self.playwright.stop()
+       
             
     
     def goto(self, url):
