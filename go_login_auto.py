@@ -361,7 +361,7 @@ def upload_ytb(channel_username='@tramyeu88'):
 
             
 
-            input_date = md.driver.page.locator("//tp-yt-iron-input[@id='input-13']//input")
+            input_date = md.driver.page.locator("//tp-yt-iron-input[@id='input-3']//input")
             if input_date.count() > 0:
                 input_date.click()
                 if page_lang == "vi":
@@ -375,7 +375,7 @@ def upload_ytb(channel_username='@tramyeu88'):
             else:
                 print("Input date not found.")
 
-            input_hours = md.driver.page.locator("//tp-yt-iron-input[@id='input-3']//input")
+            input_hours = md.driver.page.locator("//tp-yt-iron-input[@id='input-1']//input")
             if input_hours.count() > 0:
                 input_hours.click()
                 input_hours.fill("20:30")
