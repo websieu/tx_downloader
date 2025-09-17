@@ -11,3 +11,4 @@ cloud
 *.exe
 *.spec
 *.mp4
+project_upload/

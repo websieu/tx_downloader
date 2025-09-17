@@ -5,7 +5,10 @@ import shutil
 import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
+import unicodedata
+import re
 
+from lib.telegram import send_telegram_message
 def download_zip(url, output_path):
     """
     Download a ZIP file from the given URL and save it to output_path.
@@ -92,3 +95,69 @@ def download_with_wget(
     if result.returncode != 0:
         return False
     return out
+
+
+def title_to_slug(title: str, max_length: int = 40) -> str:
+    # 1. Normalize to NFKD and strip accents
+    normalized = unicodedata.normalize('NFKD', title)
+    ascii_str = normalized.encode('ASCII', 'ignore').decode('ASCII')
+    # 2. Lowercase
+    lower_str = ascii_str.lower()
+    # 3. Replace non-alphanumeric sequences with underscores
+    slug = re.sub(r'[^a-z0-9]+', '_', lower_str).strip('_')
+    # 4. Truncate to max_length
+    truncated = slug[:max_length]
+    # 5. If original slug was longer, add ellipsis
+    if len(slug) > max_length:
+        truncated += ''
+    return truncated
+
+# if __name__ == '__main__':
+#     title = "Thay đổi vận | mệnh tình yêu thời | cấp hai nhờ bí ẩn mật khẩu 0101!"
+#     print(title_to_slug(title))
+#     # → toi_yeu_em_tu_cai_nh...
+
+
+def download_project_for_upload(video, project_path="project_upload"):
+
+    video_id = video['video_id']
+    upload_status = video['upload_status']
+    if(upload_status == "not_uploaded"):
+        part_1_link = video['part_1_link']
+        if(part_1_link != ''):
+            mp4_link = part_1_link
+        else:
+            mp4_link = video['hg_link']
+    else:
+        mp4_link = video['part_2_link']
+    
+    thumb_link = video['thumb_link']
+    mp4_link = mp4_link.replace("blob/main", "resolve/main")
+    if(thumb_link):
+        thumb_link = thumb_link.replace("blob/main", "resolve/main")
+
+    title = video['title']
+    file_name = title_to_slug(title)
+   
+    extract_dir = f"{project_path}/{video_id}"
+    mp4_path = f"{extract_dir}/{file_name}.mp4"
+
+    first_part = video_id.split('_', 1)[0]
+
+    thumb_path = f"{extract_dir}/{first_part}.jpg"
+
+    if not os.path.exists(extract_dir):
+        os.makedirs(extract_dir, exist_ok=True)
+    print(f"Downloading video to {mp4_path} ...")
+    print(f"Downloading thumb to {thumb_path} ...")
+    send_telegram_message(f"Downloading video to {mp4_path} ...")
+    if(not os.path.exists(mp4_path)):
+        data_down = download_zip(mp4_link, mp4_path)
+        if(not data_down):
+            return False
+        
+    if(not os.path.exists(thumb_path) and thumb_link):
+        data_down = download_zip(thumb_link, thumb_path)
+        # if(not data_down):
+        #     return False
+    return True

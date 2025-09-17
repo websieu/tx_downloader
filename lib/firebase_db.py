@@ -72,6 +72,16 @@ class FirestoreManager:
         except Exception as e:
             print(f"Error updating last selected for channel {channel_username}: {e}")
             return False
+    def upload_last_field(self, channel_username, field_name):
+        try:
+            data_update = {
+                field_name: firestore.SERVER_TIMESTAMP
+            }
+            self.update_channel(channel_username, data_update)
+            return True
+        except Exception as e:
+            print(f"Error updating last selected for channel {channel_username}: {e}")
+            return False
 
     def select_channel_oldest_upload(self):
         """
@@ -165,6 +175,51 @@ class FirestoreManager:
 
             # Sort channels by 'last_selected' (assumed to be a comparable value like a timestamp)
             channels.sort(key=lambda ch: ch.get("last_selected"))
+            for channel in channels:
+                print(f"Channel: {channel['channel_username']}")
+                if channel['channel_username'] in ast.literal_eval(LIST_CHANNEL):
+                    return channel  
+            # Return the channel with the oldest last_selected value.
+            return None
+        except Exception as e:
+            print(f"not found channel to process with error: {e}")
+            
+            return None
+
+    def select_channel_by_field(self, field_name):
+        """
+        Select the active channel with the oldest last_selected time and matching channel_type.
+        This method fetches all channels matching the where conditions, then sorts them
+        in Python based on the 'last_selected' field.
+
+        Args:
+            video_type: The channel type to filter by.
+            
+        Returns:
+            dict: A dictionary representing the channel with the oldest last_selected time,
+                including the document ID as 'channel_username', or None if no match is found.
+        """
+        try:
+            channels_ref = self.db.collection("channels")
+            # Query without order_by to avoid composite index requirement.
+            query = (channels_ref
+                    .where(filter=FieldFilter("status", "==", "active"))
+                    )
+                    
+            results = query.get()
+            channels = []
+            
+            for doc in results:
+                ch = doc.to_dict()
+                ch["channel_username"] = doc.id  # include the document ID
+                channels.append(ch)
+                
+            if not channels:
+                print("No active channels found ")
+                return None
+
+            # Sort channels by 'last_selected' (assumed to be a comparable value like a timestamp)
+            channels.sort(key=lambda ch: ch.get(field_name, 0))
             for channel in channels:
                 print(f"Channel: {channel['channel_username']}")
                 if channel['channel_username'] in ast.literal_eval(LIST_CHANNEL):
@@ -466,7 +521,8 @@ class FirestoreManager:
             
             "process_status": "completed",
             "upload_status": "not_uploaded",
-            "channel_username": ast.literal_eval(LIST_CHANNEL)
+            "channel_username": ast.literal_eval(LIST_CHANNEL),
+            "type": VIDEO_TYPE
             
         }
         order = {
@@ -700,6 +756,8 @@ if __name__ == "__main__":
 
     # Create an instance of FirestoreManager.
     fm = FirestoreManager(service_account_path)
+    video = fm.select_video_for_upload()
+    print(video)
     #video = fm.select_video_uploaded_part1()
     # channel = fm.select_channel_by_list("ancient", ast.literal_eval(LIST_CHANNEL))
     # print(f"channel {channel} videos.")
@@ -729,34 +787,4 @@ if __name__ == "__main__":
     # }
     # fm.create_channel(channel_prefix, channel_data)
     
-    """Create a video document in Firestore via FirestoreManager."""
-
-    book_url = "https://www.69shuba.com/book/85454/"
-    video_id = get_book_id(book_url) or book_url  # fall back to raw link if parse fails
-    channel_username = "bao_u_review"
-    video_type = "text"
-    video_data = {
-                "title": "",
-                "bili_link": book_url,
-                "process_status": "pending",
-                "upload_status": "not_uploaded",
-                "hg_link": "",
-                "channel_username": channel_username,
-                "type": video_type,
-                "version": 0,
-                "view_count": 0,
-                "time_completed": firestore.SERVER_TIMESTAMP,
-                "upload_to_yt_time": 0,
-                "status_upload_tiktok": "not_uploaded",
-                "new_youtube_link": "",
-                "last_part_name": 0,
-                "thumb_link": "",
-                "part_1_link": "",
-                "part_2_link": "",
-                "is_multi_part": False
-            }
-    check = fm.select_video_by_id(video_id)
-    if check:
-        print("Video %s already exists, skipping creation.", video_id)
-    else:
-        fm.create_video(video_id, video_data)
+    

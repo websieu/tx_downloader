@@ -14,6 +14,9 @@ from pathlib import Path
 from lib.find_username import build_rel_xpath
 from lib.utils import GL_PROFILE, GO_LOGIN_TOKEN, REMOTE_PORT, get_video_id
 import random
+from datetime import datetime
+
+from lib.ytb_video import fetch_lastest_schedule_video, fetch_list_video, fetch_video_status, get_time_schedule, switch_account
 
 class ManageDriver:
     def __init__(self, gl_token="", port=3600):
@@ -194,51 +197,45 @@ def get_download_link(url, retry=0):
             
             return False
 
-def upload_ytb(channel_username='@tramyeu88'):
+def upload_ytb_browser(channel_username, video_path, thumb_path, title, description, gl_profile ):
     md = ManageDriver(gl_token=GO_LOGIN_TOKEN, port=9009)
-    md.start_gl(gl_profile="68a2cb0d24daa090cccefcae")
+    md.start_gl(gl_profile=gl_profile)
     driver_ts = md.create_driver("https://studio.youtube.com/")
+    
     time.sleep(5)
     if not driver_ts:
         print("Failed to create driver.")
         md.close_all()
         return False 
     try:
-        print("click avatar")
-        avatar = md.driver.page.locator('//*[@id="avatar-btn"]')
-        if avatar.count() == 0:
-            account_btn = md.driver.page.locator('//*[@id="account-button"]')
-            if account_btn.count() == 0:
-                print("Không tìm thấy nút tài khoản.")
-                md.close_all()
-                return False
-            account_btn.click()
-        else:
-            avatar.click()
-        print("click dropdown")
-        time.sleep(2)
-        dropdown = md.driver.page.locator('tp-yt-iron-dropdown')
-                    # chờ dropdown mở
+        switch = switch_account(md.driver.page, channel_username)
+        if not switch:
+            print("Failed to switch account.")
+            md.close_all()
+            return False
+        
+        list_video = fetch_list_video(md.driver.page)
+        if not list_video:
+            print("Failed to fetch video list.")
+            md.close_all()
+            return False
 
-        item = dropdown.locator('#primary-text-container').nth(2)  # 0-based → phần tử thứ 3
-        #item.scroll_into_view_if_needed()
+        lastest_schedule = fetch_lastest_schedule_video(list_video)
+        print(f"lastest_schedule: {lastest_schedule}")
+        publish_time = get_time_schedule(lastest_schedule)
+        print(f"publish_time: {publish_time}")
 
-        item.click()
-        print("click switch account")
-        time.sleep(5)
-        # tìm kiếm account theo username
-        # rel_xpath = build_rel_xpath(channel_username)
-        # btn = md.driver.page.locator(f"xpath={rel_xpath}").first.click()
-        account_locator = md.driver.page.locator("ytd-account-item-section-renderer").get_by_text(channel_username)
-        account_locator.click() # Để click vào phần tử
-        print("click account")
         ### click upload btn
         time.sleep(5)
         btn_upload = md.driver.page.locator('//*[@id="create-icon"]').click()
         time.sleep(5)
         btn_upload_video = md.driver.page.locator('//*[@id="text-item-0"]').click()
         time.sleep(5)
-        file_path = str(Path(("F:\\Code\\AI\\output_video\\85122_250_long.mp4")))  # example path
+        print(f"video file path: {video_path}")
+
+        file_path = str(Path(video_path).resolve())  # Convert to absolute path
+        if os.name == "nt":
+            file_path = file_path.replace("/", "\\")  # Ensure Windows path format
         # Use Selenium WebDriver to send file path to input element for large files
         #input_element = md.driver.page.locator('input[type="file"]').set_input_files(file_path)
         set_files_via_cdp(md.driver.page, 'input[type="file"]', file_path)
@@ -261,8 +258,8 @@ def upload_ytb(channel_username='@tramyeu88'):
             print("Checking upload status...")
             uploading =  check_upload_status(md.driver.page)
             if uploading:
-                print("Still uploading, waiting for 10 seconds...")
-                time.sleep(10)
+                print("Still uploading, waiting for 5 seconds...")
+                time.sleep(5)
 
         print("Upload complete.")
 
@@ -275,7 +272,7 @@ def upload_ytb(channel_username='@tramyeu88'):
             return False
         
         title_element.click()
-        title_element.fill("Thiên hạ đệ nhất kiếm")
+        title_element.fill(title)
 
         ### set description ###
         desc_element = md.driver.page.locator('//ytcp-social-suggestions-textbox[@id="description-textarea"]//div[@id="textbox"]')
@@ -284,7 +281,7 @@ def upload_ytb(channel_username='@tramyeu88'):
             md.close_all()
             return False
         desc_element.click()
-        desc_element.fill("Thiên hạ đệ nhất kiếm")
+        desc_element.fill(description)
 
         ### set thumbnail ###
 
@@ -293,9 +290,31 @@ def upload_ytb(channel_username='@tramyeu88'):
             print("Thumbnail upload element not found.")
             md.close_all()
             return False
-        thumb_path = str(Path(("F:\\Code\\AI\\output_video\\31557.jpg")))  # example path
+        
+        thumb_path = str(Path(thumb_path).resolve())  # Convert to absolute path
+        if os.name == "nt":
+            thumb_path = thumb_path.replace("/", "\\")  # Ensure Windows path format
         upload_thumb.set_input_files(thumb_path)
         time.sleep(5)
+
+        ### fetch video url ###
+        video_id = None
+        video_href = md.driver.page.locator("//span[contains(concat(' ', normalize-space(@class), ' '), ' video-url-fadeable ')]//a")
+        if video_href.count() > 0:
+            video_url = video_href.first.get_attribute("href")
+            print(f"Video URL: {video_url}")
+            m = re.search(r'^(?:https?:\/\/)?(?:www\.)?youtu\.be\/([A-Za-z0-9_-]{11})(?:\?.*)?$', video_url)
+            video_id = m.group(1) if m else None  # "BXsnuJM7tU"
+            print(f"Video ID: {video_id}")
+            if not video_id:
+                print("Failed to extract video ID from URL.")
+                md.close_all()
+                return False
+        else:
+            print("Video URL not found.")
+            md.close_all()
+            return False
+
         ### turn on monetization ###
         monetization_tab = md.driver.page.locator("//button[@id='step-badge-1' and @role='tab' and @test-id='MONETIZATION']")
         if monetization_tab.count() > 0:
@@ -364,10 +383,17 @@ def upload_ytb(channel_username='@tramyeu88'):
             input_date = md.driver.page.locator("//tp-yt-iron-input[@id='input-3']//input")
             if input_date.count() > 0:
                 input_date.click()
-                if page_lang == "vi":
-                    input_date.fill("20/09/2025")
+                if publish_time and isinstance(publish_time, datetime):
+                    if page_lang == "vi":
+                        input_date.fill(publish_time.strftime("%d/%m/%Y"))
+                    else:
+                        input_date.fill(publish_time.strftime("%m/%d/%Y"))
                 else:
-                    input_date.fill("09/20/2025")
+                    if page_lang == "vi":
+                        input_date.fill("20/09/2026")
+                    else:
+                        input_date.fill("09/20/2026")
+                
                 input_date.press("Enter")
 
                 time.sleep(2)
@@ -378,7 +404,10 @@ def upload_ytb(channel_username='@tramyeu88'):
             input_hours = md.driver.page.locator("//tp-yt-iron-input[@id='input-1']//input")
             if input_hours.count() > 0:
                 input_hours.click()
-                input_hours.fill("20:30")
+                if publish_time and isinstance(publish_time, datetime):
+                    input_hours.fill(publish_time.strftime("%H:%M"))
+                else:
+                    input_hours.fill("10:00")
                 input_hours.press("Enter")
                 time.sleep(2)
             else:
@@ -392,30 +421,31 @@ def upload_ytb(channel_username='@tramyeu88'):
             else:
                 print("Done button not found.")
 
+        check_btn = md.driver.page.locator("//ytcp-button[@id='primary-action-button' and contains(concat(' ', normalize-space(@class), ' '), ' ytcp-prechecks-warning-dialog ')]")
+        if check_btn.count() > 0:
+            check_btn.click()
+            time.sleep(2)
+        else:
+            print("Check button not found.")
+
         time.sleep(30)
         md.close_all()
-        time.sleep(30)
-        return True
+        
+        
+
+        return video_id
     except Exception as e:
         print("An error occurred while upload ytb:")
         traceback.print_exc()
         md.close_all()
         return False
 def ensure_upload_complete(page, timeout=600):
-    selector = "span.progress-label.style-scope.ytcp-video-upload-progress"
+    selector = "//ytcp-video-upload-progress[@uploading]"
     locator = page.locator(selector)
     if locator.count() > 0:
         try:
             # Lấy nội dung text của phần tử
-            text_content = locator.text_content().lower()
-
-            # Kiểm tra nội dung text
-            if "uploading" in text_content or "đã tải được" in text_content:
-                print(f"Phần tử '{selector}' tồn tại và đang hiển thị trạng thái upload.")
-                return True
-            else:
-                print(f"Phần tử '{selector}' tồn tại nhưng không hiển thị trạng thái upload mong muốn.")
-                return False
+            return True
         except Exception as e:
             print(f"Lỗi khi lấy text content hoặc kiểm tra: {e}")
             return False
@@ -434,24 +464,11 @@ def check_upload_status(page):
         bool: True nếu phần tử tồn tại và chứa text mong muốn, ngược lại là False.
     """
     selector = "span.progress-label.style-scope.ytcp-video-upload-progress"
-    locator = page.locator(selector)
+    locator = page.locator("//ytcp-video-upload-progress[@uploading]")
 
     # Kiểm tra sự tồn tại của phần tử
     if locator.count() > 0:
-        try:
-            # Lấy nội dung text của phần tử
-            text_content = locator.text_content().lower()
-
-            # Kiểm tra nội dung text
-            if "uploading" in text_content or "đã tải được" in text_content:
-                print(f"Phần tử '{selector}' tồn tại và đang hiển thị trạng thái upload.")
-                return True
-            else:
-                print(f"Phần tử '{selector}' tồn tại nhưng không hiển thị trạng thái upload mong muốn.")
-                return False
-        except Exception as e:
-            print(f"Lỗi khi lấy text content hoặc kiểm tra: {e}")
-            return False
+        return True
     else:
         print(f"Phần tử '{selector}' không tồn tại.")
         return False
@@ -490,14 +507,9 @@ def set_files_via_cdp(page, css_selector, files, frame=None):
         traceback.print_exc()
         raise
 
-
-
-
-
 if __name__ == "__main__":
-    list_channel = ['@thiendao96','@cuuthienlo']
-    i = 0
-    upload_ytb(channel_username='@Baoureview299')
+    
+    fetch_list_video(channel_username='@Baoureview299', gl_profile='68a2cb0d24daa090cccefcae')
     # while i < 8:
     #     ran_channel = random.choice(list_channel)
     #     upload_ytb(channel_username=ran_channel)
