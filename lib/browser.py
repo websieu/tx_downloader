@@ -26,6 +26,11 @@ class Browser:
         
         # Navigate to a website
         self.page = new_page
+
+        # ### test code ###
+        # self.current_page = context.pages[0]
+        # self.current_page.bring_to_front()
+        # ### end test code ###
        
     
 

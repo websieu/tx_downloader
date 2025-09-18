@@ -702,12 +702,11 @@ class FirestoreManager:
             print("No last_upload timestamp found.")
             return False  # Or handle as needed
 
-        # Calculate the time three hours ago.
-        three_hours_ago = datetime.now(timezone.utc) - timedelta(hours=3)
+        # Calculate the time one hour ago.
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
-
-        # Return True if last_upload is earlier than three_hours_ago.
-        return last_upload < three_hours_ago
+        # Return True if last_upload is earlier than one_hour_ago.
+        return last_upload < one_hour_ago
 
     def delete_videos_by_channel(self,
                                  channel_username: str,

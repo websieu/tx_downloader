@@ -70,10 +70,10 @@ class UploadSchedulerFirebase:
         # if( 'money' in channel and channel['money']):
         #     return channel
         
-        # if(not self.fm.is_last_upload_older_than_3_hours(channel)):
-        #     print("channel need to wait to upload...")
-        #     #self.fm.update_video(video_id, update_data={"time_completed": firestore.SERVER_TIMESTAMP})
-        #     return None
+        if(not self.fm.is_last_upload_older_than_3_hours(channel)):
+            print("channel need to wait to upload...")
+            #self.fm.update_video(video_id, update_data={"time_completed": firestore.SERVER_TIMESTAMP})
+            return None
         return channel
     
     def get_data_to_upload(self):
@@ -301,7 +301,7 @@ class UploadSchedulerFirebase:
             project_name = video['video_id']
             first_part = project_name.split("_")[0] 
             img_path = f"{self.project_path}/{video['video_id']}/{first_part}.jpg"
-            out_path = f"{self.project_path}/{video['video_id']}/{first_part}_part_{part_name}.jpg"
+            out_path = f"{self.project_path}/{video['video_id']}/{first_part}_thumb.jpg"
 
             write_text_on_image(part_name, img_path, out_path)
             
@@ -316,7 +316,7 @@ class UploadSchedulerFirebase:
 
             video_id = video['video_id']
             first_part = video_id.split('_', 1)[0]
-            thumbnail_file = f"{working_dir}/{first_part}_part_{part_name}.jpg"
+            thumbnail_file = f"{working_dir}/{first_part}_thumb.jpg"
             print("thumbnail_file: ", thumbnail_file)
             
             #title = title_with_part

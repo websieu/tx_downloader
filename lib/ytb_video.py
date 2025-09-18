@@ -5,6 +5,9 @@ import traceback
 import datetime as dt
 from zoneinfo import ZoneInfo
 import json
+from time import sleep
+from lib.ads_cal import compute_ad_timestamps
+from lib.get_dur import get_duration_hhmmss
 
 def fetch_video_status(video):
     if video.get('status') == 'VIDEO_STATUS_PROCESSED' and video.get('visibility').get('effectiveStatus') == 'VIDEO_VISIBILITY_STATUS_USER_CONFIG' \
@@ -142,6 +145,87 @@ def get_time_schedule(latest_video_time):
     slot_utc = next_slot.astimezone(ZoneInfo("Asia/Bangkok"))
     #slot_utc = next_slot.astimezone(dt.timezone.utc)
     return slot_utc
+
+def set_ads(page, video_path):
+    ## click start set ads ###
+    start_set_ads = page.locator("//ytcp-button[@id='place-manually-button']")
+    if(start_set_ads.count() > 0):
+        print("click start set ads")
+        start_set_ads.click()
+        sleep(5)
+    else:
+        print("start set ads not found")
+        return False
+    
+    ## uncheck auto ads ###
+
+    checkbox = page.locator("//ytcp-checkbox-lit[@test-id]//div[@id='checkbox' and @tabindex='0']")
+    if(checkbox.count() > 0):
+        print("uncheck auto ads")
+        is_checked = checkbox.get_attribute("aria-checked")
+        if(is_checked == 'true'):
+            label = page.locator("//ytcp-checkbox-lit[@test-id]//div[@class='label style-scope ytcp-checkbox-lit']")
+            if (label.count() > 0):
+                print("click label to uncheck")
+                label.click()
+                sleep(2)
+            #checkbox.click()
+        else:
+            print("auto ads already unchecked")
+        sleep(5)
+    else:
+        print("auto ads checkbox not found")
+        return False
+    ## end click start set ads ###
+    duration = get_duration_hhmmss(video_path)
+    if not duration:
+        print("Không lấy được duration video.")
+        return False
+    
+    ads_slot = compute_ad_timestamps(duration, "01:00:00") 
+    total_ads = len(ads_slot)
+    print(f"total ads slot: {total_ads}")
+    ### click insert ad break ###
+    insert_ad_break = page.locator("//ytcp-button[@test-id='insert-ad-slot']")
+    if(insert_ad_break.count() > 0):
+        print("click insert ad break")
+        for i in range(total_ads):
+            insert_ad_break.click()
+            time.sleep(1)
+    else:
+        print("insert ad break not found")
+        return False
+    ### end click insert ad break ###
+
+    ### start set time ###
+    set_time_inputs = page.locator("//ytve-framestamp-input//input")
+    if(set_time_inputs.count() > 0):
+        for i in range(set_time_inputs.count()):
+            if(i >= total_ads):
+                break
+            time_str = ads_slot[i]
+            #time_str = time_str[::-1]
+            print(f"set time for ad break {i+1}: {time_str}")
+            input_box = set_time_inputs.nth(i)
+            input_box.press("Control+A")  # Ctrl+A
+            input_box.press("Backspace")        # Delete
+            input_box.type(time_str)
+            time.sleep(1)
+    else:
+        print("set time inputs not found")
+        return False
+    ### end set time ###
+
+    ## click save button ###
+
+    save_btn = page.locator("//div[@id='save-container']//ytcp-button[@id='save-button']")
+    if(save_btn.count() > 0):
+        print("click save button")
+        save_btn.click()
+        time.sleep(5)
+    else:
+        print("save button not found")
+        return False
 
 if __name__ == "__main__":
     with open("list_video.json", "r", encoding="utf-8") as f:
