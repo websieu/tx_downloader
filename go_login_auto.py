@@ -12,11 +12,12 @@ from selenium.common.exceptions import WebDriverException
 from pathlib import Path
 
 from lib.find_username import build_rel_xpath
+from lib.telegram import send_telegram_message
 from lib.utils import GL_PROFILE, GO_LOGIN_TOKEN, REMOTE_PORT, get_video_id
 import random
 from datetime import datetime
 
-from lib.ytb_video import fetch_lastest_schedule_video, fetch_list_video, fetch_video_status, get_time_schedule, switch_account
+from lib.ytb_video import fetch_lastest_schedule_video, fetch_list_video, fetch_video_status, get_time_schedule, set_ads, switch_account
 
 class ManageDriver:
     def __init__(self, gl_token="", port=3600):
@@ -327,12 +328,20 @@ def upload_ytb_browser(channel_username, video_path, thumb_path, title, descript
                 radio_on = md.driver.page.locator('//tp-yt-paper-radio-button[@id="radio-on"]//div[@id="radioContainer"]')
                 if radio_on.count() > 0:
                     radio_on.click()
+                
+                
                 save_btn_on = md.driver.page.locator("//ytcp-button[@id='save-button']")
                 if save_btn_on.count() > 0:
                     save_btn_on.click()
                     time.sleep(2)
                 else:
                     print("Save button not found.")
+                time.sleep(5)
+                try:
+                    set_ads(md.driver.page, video_path)
+                except Exception as e:
+                    send_telegram_message(f"Error setting ads for video {video_id}: {e}")
+                    print(f"Error setting ads: {e}")
             else:
                 print("Monetization option not found.")
         else:

@@ -70,13 +70,16 @@ def _parse_period(s: str) -> int:
         raise ValueError("ads_period phải > 0.")
     return total
 
-def _format_timecode(total_seconds: int) -> str:
+def _format_timecode(total_seconds: int, width: int) -> str:
     """Định dạng thành h:mm:ss:ff (ff=00, giờ không zero-pad, mm/ss pad 2)."""
-    h = total_seconds // 3600
-    rem = total_seconds % 3600
-    m = rem // 60
-    s = rem % 60
-    return f"{h}:{m:02d}:{s:02d}:00"
+    h, rem = divmod(total_seconds, 3600)
+    m, s = divmod(rem, 60)
+
+    # Độ rộng đúng bằng số chữ số của h (0 -> '0', 3 -> '3', 12 -> '12', 123 -> '123')
+    
+    h_str = f"{h:0{width}d}"  # tương đương str(h), nhưng đúng yêu cầu "format theo số chữ số"
+
+    return f"{h_str}:{m:02d}:{s:02d}:00"
 
 def compute_ad_timestamps(duration_hhmmss: str, ads_period: str) -> List[str]:
     """
@@ -88,6 +91,8 @@ def compute_ad_timestamps(duration_hhmmss: str, ads_period: str) -> List[str]:
       → ["0:00:00:00", "1:00:00:00", "2:00:00:00"]
     """
     duration_sec = _parse_hhmmss_strict(duration_hhmmss)
+    #hour_width = duration_sec // 3600
+    hour_width = len(str(duration_sec // 3600))
     period_sec = _parse_period(ads_period)
 
     if period_sec <= 0:
@@ -98,13 +103,13 @@ def compute_ad_timestamps(duration_hhmmss: str, ads_period: str) -> List[str]:
     times = []
     t = 0
     while t <= duration_sec:
-        times.append(_format_timecode(t))
+        times.append(_format_timecode(t, hour_width))
         t += period_sec
     return times
 
 if __name__ == "__main__":
     # Ví dụ sử dụng
-    duration = "120:30:00"
+    duration = "200:30:00"
     ads_period = "00:30:00"
     timestamps = compute_ad_timestamps(duration, ads_period)
     print(timestamps)

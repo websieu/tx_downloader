@@ -152,7 +152,7 @@ def set_ads(page, video_path):
     if(start_set_ads.count() > 0):
         print("click start set ads")
         start_set_ads.click()
-        sleep(5)
+        sleep(10)
     else:
         print("start set ads not found")
         return False
