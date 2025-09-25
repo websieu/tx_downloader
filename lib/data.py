@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import unicodedata
 import re
 
+from lib.download_safe import download_with_resume
 from lib.telegram import send_telegram_message
 def download_zip(url, output_path):
     """
@@ -152,12 +153,14 @@ def download_project_for_upload(video, project_path="project_upload"):
     print(f"Downloading thumb to {thumb_path} ...")
     send_telegram_message(f"Downloading video to {mp4_path} ...")
     if(not os.path.exists(mp4_path)):
-        data_down = download_zip(mp4_link, mp4_path)
+        data_down = download_with_resume(mp4_link, mp4_path)
+        #data_down = download_zip(mp4_link, mp4_path)
         if(not data_down):
             return False
         
     if(not os.path.exists(thumb_path) and thumb_link):
-        data_down = download_zip(thumb_link, thumb_path)
+        data_down = download_with_resume(thumb_link, thumb_path)
+        #data_down = download_zip(thumb_link, thumb_path)
         # if(not data_down):
         #     return False
     return True

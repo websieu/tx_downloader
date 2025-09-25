@@ -209,7 +209,7 @@ def set_ads(page, video_path):
             input_box = set_time_inputs.nth(i)
             input_box.press("Control+A")  # Ctrl+A
             input_box.press("Backspace")        # Delete
-            input_box.type(time_str)
+            input_box.fill(time_str)
             time.sleep(1)
     else:
         print("set time inputs not found")

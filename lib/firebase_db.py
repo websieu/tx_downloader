@@ -2,6 +2,8 @@ import ast
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
+import traceback
 import firebase_admin
 from firebase_admin import credentials, firestore
 import urllib.parse
@@ -749,6 +751,46 @@ class FirestoreManager:
             print(f"Error deleting videos for channel '{channel_username}': {e}")
 
         return total_deleted
+    
+    def add_text_video(self, video_id: str, channel_username: str, video_type: str) -> bool:
+        """Create a video document in Firestore via FirestoreManager."""
+        
+        link = f"https://69shuba.com/book/{video_id}"
+
+        video_data = {
+            "title": "",
+            "bili_link": link,
+            "process_status": "pending",
+            "upload_status": "not_uploaded",
+            "hg_link": "",
+            "channel_username": channel_username,
+            "type": video_type,
+            "version": 0,
+            "view_count": 0,
+            "time_completed": firestore.SERVER_TIMESTAMP,
+            "upload_to_yt_time": 0,
+            "status_upload_tiktok": "not_uploaded",
+            "new_youtube_link": "",
+            "last_part_name": 0,
+            "thumb_link": "",
+            "part_1_link": "",
+            "part_2_link": "",
+            "is_multi_part": False,
+        }
+        try:
+            check = self.select_video_by_id(video_id)
+            if check:
+                print(f"Video '{video_id}' already exists. Skipping creation.")
+                return False
+            self.create_video(video_id, video_data)
+            
+            return True
+        except Exception as exc:
+            print(f"❌ Error creating video doc: {exc}")
+            traceback.print_exc()
+           
+            return False
+
 if __name__ == "__main__":
     # Replace with the path to your service account JSON file.
     service_account_path = "F:\\Code\\AI\\Auto-Youtube\\auth_files\\firebase.json"

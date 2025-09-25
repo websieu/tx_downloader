@@ -263,6 +263,7 @@ class UploadSchedulerFirebase:
             channel_data = self.channel_config
             channel_ytb_username = channel_data["channel_ytb_username"]
             channel_go_profile = channel_data["channel_go_profile"]
+            title = title.upper()
             result = upload_ytb_browser(channel_ytb_username, video_file, thumbnail_file, title, description, channel_go_profile)
             return result
         except Exception as e:
@@ -303,7 +304,16 @@ class UploadSchedulerFirebase:
             img_path = f"{self.project_path}/{video['video_id']}/{first_part}.jpg"
             out_path = f"{self.project_path}/{video['video_id']}/{first_part}_thumb.jpg"
 
-            write_text_on_image(part_name, img_path, out_path)
+            is_trans_full = False
+            if 'is_trans_full' in video:
+                is_trans_full = video['is_trans_full']
+            
+            if is_trans_full:
+                text_write = "Full"
+            else:
+                text_write = part_name
+            
+            write_text_on_image(text_write, img_path, out_path)
             
 
             file_name = title_to_slug(title)
@@ -323,7 +333,10 @@ class UploadSchedulerFirebase:
             if len(title_with_part) > 100:
                 title_with_part = title_with_part[:98] + '..'
             print("title: ", title)
-            description = title+ f" | Phần {part_name} #reviewtruyen #truyentutien #truyenaudio"
+            if 'description' in video and video['description']:
+                description = video['description']
+            else:
+                description = title+ f" | Phần {part_name} #reviewtruyen #truyentutien #truyenaudio"
             tags = ["reviewtruyen", "truyentutien", "truyenaudio"]
             
             data_upload = self.upload_video(video_file, thumbnail_file, title_with_part, description, time_schedule)

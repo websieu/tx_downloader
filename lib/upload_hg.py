@@ -2,7 +2,7 @@ from huggingface_hub import HfApi, create_repo
 
 from lib.telegram import send_telegram_message
 
-def upload_to_hg(file_path, name_in_hg, repo_id='raymondt/raymond_image_v1'):
+def upload_to_hg(file_path, name_in_hg, repo_id='raymondt/raymond_image_v1', retry=0):
     try:
 
         api = HfApi()
@@ -28,6 +28,9 @@ def upload_to_hg(file_path, name_in_hg, repo_id='raymondt/raymond_image_v1'):
     except Exception as e:
         send_telegram_message(f"upload to HG error: {e}")
         print(e)
+        if retry < 3:
+            print(f"Retrying upload... (Attempt {retry + 1})")
+            return upload_to_hg(file_path, name_in_hg, repo_id=repo_id, retry=retry + 1)
         return False
 
 def download_file_hg(file_name, repo_id='raymondt/cn_name', local_dir='output'):
