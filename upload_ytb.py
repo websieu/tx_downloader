@@ -58,6 +58,8 @@ class UploadSchedulerFirebase:
             return video
     def fetch_channel(self, video):
         channel_username = video['channel_username']
+        print(f"fetch channel {channel_username} for upload")
+        print(f"video data: {video['video_id']}")
         video_id = video['video_id']
         channel = self.fm.select_channel_by_id(channel_username)
         if(not channel):
@@ -81,6 +83,7 @@ class UploadSchedulerFirebase:
         if(not video):
             return None
         channel = self.fetch_channel(video)
+        
         if(not channel):
             print("not found channel to process...")
             return None
@@ -232,6 +235,7 @@ class UploadSchedulerFirebase:
             print("upload fail")
             self.fm.update_video(self.project_name, {"upload_status": "error", "error_message": "upload fail"})
             self.fm.update_channel(self.channel_id, {"last_upload": firestore.SERVER_TIMESTAMP})
+            shutil.rmtree(f"{self.project_path}/{self.project_name}")
             return False
         video_id_uploaded = result_upload["video_id"]
 

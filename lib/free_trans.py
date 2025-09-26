@@ -762,7 +762,7 @@ def parse_args():
 
 if __name__ == "__main__":
     
-   
+   while True:
     run_translate(
         input_dir=Path('first_chap'),
         output_dir=Path('first_chap_out'),
@@ -773,6 +773,7 @@ if __name__ == "__main__":
         task=TASK_NORMALIZE,
         max_workers=6,
     )
+    time.sleep(10*60)  # chờ 30 phút rồi dịch lại
 
     # run_fix_name_folder(
     #     name_folder=Path('/root/wan/output/output_trans'),

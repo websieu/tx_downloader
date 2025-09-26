@@ -371,6 +371,8 @@ def upload_ytb_browser(channel_username, video_path, thumb_path, title, descript
         print(page_lang)
 
         schedule_tab = md.driver.page.locator("//button[@id='step-badge-5' and @role='tab' and @test-id='REVIEW']")
+        if schedule_tab.count() == 0:
+            schedule_tab = md.driver.page.locator("//button[@id='step-badge-3' and @role='tab' and @test-id='REVIEW']")
         time.sleep(5)
 
         if schedule_tab.count() > 0:
@@ -390,6 +392,8 @@ def upload_ytb_browser(channel_username, video_path, thumb_path, title, descript
             
 
             input_date = md.driver.page.locator("//tp-yt-iron-input[@id='input-3']//input")
+            if input_date.count() == 0:
+                input_date = md.driver.page.locator("//tp-yt-iron-input[@id='input-2']//input")
             if input_date.count() > 0:
                 input_date.click()
                 if publish_time and isinstance(publish_time, datetime):

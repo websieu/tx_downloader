@@ -5,6 +5,7 @@ import os
 import re
 import json
 from pathlib import Path
+from time import sleep
 
 def scan_segments(folder: str, output_json: str = "result.json"):
     """
@@ -57,5 +58,7 @@ def make_urls_from_result(result_file: str = "result.json", output_file: str = "
     print(f"✅ Đã tạo {len(urls)} URL và lưu vào {output_file}")
 if __name__ == "__main__":
     # Thay '.' bằng đường dẫn folder chứa các file txt
-    scan_segments(folder="first_chap_out")
+    while True:
+        scan_segments(folder="first_chap_out")
+        sleep(10*60)  # chờ 10 phút rồi quét lại
     #make_urls_from_result(result_file="result.json", output_file="url.json")

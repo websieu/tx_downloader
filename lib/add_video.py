@@ -1,5 +1,6 @@
 import json
 import re
+from time import sleep
 from typing import List, Union
 
 from lib.firebase_db import FirestoreManager
@@ -102,4 +103,6 @@ if __name__ == "__main__":
 
     # Create an instance of FirestoreManager.
     fm = FirestoreManager(service_account_path)
-    add_videos_from_json("result.json", fm)
+    while True:
+        add_videos_from_json("result.json", fm)
+        sleep(30*60)  # chờ 10 phút rồi quét lại

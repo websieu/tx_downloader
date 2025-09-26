@@ -705,7 +705,10 @@ class FirestoreManager:
             return False  # Or handle as needed
 
         # Calculate the time one hour ago.
-        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        if 'is_earn' in channel_data and channel_data['is_earn']:
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        else:
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
         # Return True if last_upload is earlier than one_hour_ago.
         return last_upload < one_hour_ago
