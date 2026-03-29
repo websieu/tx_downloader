@@ -16,6 +16,7 @@ translate_segments_threaded.py
 Yêu cầu: pip install requests
 """
 
+import random
 import os, sys, re, math, time, threading, queue, argparse
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -66,7 +67,9 @@ def load_keys(keys_file: Optional[Path], keys_env: Optional[str] = None) -> List
             k = k.strip()
             if k:
                 keys.append(k)
-    return list(dict.fromkeys(keys))
+    keys = list(dict.fromkeys(keys))
+    random.SystemRandom().shuffle(keys)
+    return keys
 
 # Đếm ký tự tiếng Trung (CJK Ideographs)
 def count_chinese_chars(s: str) -> int:
@@ -760,20 +763,58 @@ def parse_args():
     ap.add_argument("--max-workers", type=int, default=None, help="Số thread chạy song song; mặc định = số key.")
     return ap.parse_args()
 
+def split_and_save_segments(input_folder: Path, output_folder: Path):
+        files = list_segment_files(input_folder)
+        for fp in files:
+            idx = get_segment_number(fp.name)
+            out_dir = output_folder / str(idx)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            text = fp.read_text(encoding="utf-8", errors="ignore")
+            parts = [part.strip() for part in text.split('<end-chap>') if part.strip()]
+            for i, part in enumerate(parts):
+                out_file = out_dir / f"segment_{i}.txt"
+                out_file.write_text(part, encoding="utf-8")
+
 if __name__ == "__main__":
     
-   while True:
-    run_translate(
-        input_dir=Path('first_chap'),
-        output_dir=Path('first_chap_out'),
-        keys_file=Path("auth_files/keys.txt"),
-        keys_env=None,
-        system_prompt_file=Path("templates/check_quality.txt"),
-        name_folder=Path('first_chap'),
-        task=TASK_NORMALIZE,
-        max_workers=6,
-    )
-    time.sleep(10*60)  # chờ 30 phút rồi dịch lại
+    # Yêu cầu: scan toàn bộ file segment_{idx}.txt trong input folder,
+    # split theo '<end-chapter>', lưu vào output_folder/idx/segment_{idx}.txt
+
+    
+
+    # Ví dụ sử dụng:
+    split_and_save_segments(Path("first_chap"), Path("first_chap_out"))
+    print("=== Finished splitting chapters into segments ===")
+
+    # for folder in sorted(Path("first_chap_out").iterdir()):
+    #     if folder.is_dir():
+    #         input_dir = folder
+    #         output_dir = folder / "out"
+    #         print(f"\n=== Processing folder: {input_dir} ===")
+    #         run_translate(
+    #             input_dir=input_dir,
+    #             output_dir=output_dir,
+    #             keys_file=Path("auth_files/keys.txt"),
+    #             keys_env=None,
+    #             system_prompt_file=Path('templates/check_quality.txt'),
+    #             name_folder=None,
+    #             task=TASK_NORMALIZE,
+    #             max_workers=6,
+    #         )
+    #         time.sleep(20)
+    #         print(f"=== Finished folder: {input_dir} ===\n")
+#    while True:
+#     run_translate(
+#         input_dir=Path('first_chap'),
+#         output_dir=Path('first_chap_out'),
+#         keys_file=Path("auth_files/keys.txt"),
+#         keys_env=None,
+#         system_prompt_file=Path("templates/check_quality.txt"),
+#         name_folder=Path('first_chap'),
+#         task=TASK_NORMALIZE,
+#         max_workers=6,
+#     )
+    #time.sleep(10*60)  # chờ 30 phút rồi dịch lại
 
     # run_fix_name_folder(
     #     name_folder=Path('/root/wan/output/output_trans'),

@@ -14,3 +14,8 @@ cloud
 project_upload/
 first_chap_out/
 first_chap/
+build*/
+tests/
+test_*.py
+*.db
+test.py

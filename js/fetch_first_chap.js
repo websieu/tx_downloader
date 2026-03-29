@@ -41,14 +41,23 @@
   const base  = 'https://www.69shuba.com/txt/' + bookId + '/'; // base URL
 
   /* ---------- 4) Vòng lặp fetch ---------- */
-  var results = ""                                 // [{id,text}] → hoặc chỉ text
-  const { id: chapId } = chapterIds[0];
-    const url_fetch = base + chapId;
+  const max_chapter = 10;
+  const results = [];
+  var max_fetch = (chapterIds.length > max_chapter) ? max_chapter :   chapterIds.length                         // [{id,text}] → hoặc chỉ text
+  for (let i = 0; i < max_fetch; i++) {
+
+    if (i > 0 && i % 10 === 0) {                        // cứ 15 chương nghỉ 20 s
+
+      await sleep(20000);
+    }
+
+    const { id: chapId } = chapterIds[i];
+    const url = base + chapId;
     let success = false;
     let retryCount = 0;
     while (!success && retryCount < 5) {
       try {
-        const resp = await fetch(url_fetch, { credentials: 'same-origin' });
+        const resp = await fetch(url, { credentials: 'same-origin' });
         if (!resp.ok) {
           console.error('HTTP lỗi', resp.status, url);
           throw new Error(resp.status);
@@ -86,8 +95,8 @@
         var text = text.replace('(本章完)',''); // Xóa số chương đầu nếu có
         var text = text.replace('loadAdv(3, 0);',''); // Xóa số chương đầu nếu có
         var text = text.replace('loadAdv(7, 3);',''); // Xóa số chương đầu nếu có
-
-        results = text                                   // hoặc {id: chapId, text}
+        text = text + "<end-chap>"; // thêm thẻ kết thúc chương
+        results.push(text);                                   // hoặc {id: chapId, text}
         console.log(text.slice(0, 50), '...'); // Hiển thị 50 ký tự đầu
         success = true;
       } catch (e) {
@@ -101,6 +110,7 @@
         await sleep(10000);
       }
     }
+  }
 
   /* ---------- 5) Xuất kết quả ---------- */
   console.log('Kết quả:', results, 'chương');

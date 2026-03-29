@@ -5,10 +5,29 @@ import time
 import firebase_admin
 
 from go_login_auto import start_fetch_book
+from novel543 import run_fetch_and_clean_novel543
+from biquge.biquge_novel import run_fetch_and_clean_biquge
 from lib.firebase_db import FirestoreManager
 from lib.telegram import send_telegram_message
 from lib.upload_hg import upload_to_hg
 from lib.utils import remove_folder
+
+
+def download_book_by_link(url: str) -> bool:
+    """
+    Download book based on the URL source.
+    Returns True if download successful, False otherwise.
+    """
+    if "novel543" in url:
+        return run_fetch_and_clean_novel543(url)
+    elif "biquge" in url:
+        return run_fetch_and_clean_biquge(url)
+    elif "69shuba" in url or "69shu" in url:
+        return start_fetch_book(url)
+    else:
+        # Default to 69shuba handler for unknown links
+        print(f"Unknown link source, using default handler: {url}")
+        return start_fetch_book(url)
 
 
 def main(fm: FirestoreManager):
@@ -50,7 +69,7 @@ def main(fm: FirestoreManager):
 
     send_telegram_message(f"Downloading video {video['video_id']}")
 
-    download_result = start_fetch_book(video['bili_link'])
+    download_result = download_book_by_link(video['bili_link'])
     
     if not download_result:
         print(f"Failed to download video: {video['video_id']}")
@@ -75,8 +94,8 @@ def main(fm: FirestoreManager):
     
     fm.update_video(video['video_id'], {
         "process_status": "downloaded",
+        "source_link": video['bili_link'],
         "bili_link": upload,
-        
     })
     send_message = f"Video {video['video_id']} downloaded and uploaded successfully to Hugging Face: {upload}"
     send_telegram_message(send_message)

@@ -176,7 +176,7 @@ class FirestoreManager:
                 return None
 
             # Sort channels by 'last_selected' (assumed to be a comparable value like a timestamp)
-            channels.sort(key=lambda ch: ch.get("last_selected"))
+            channels.sort(key=lambda ch: ch.get("last_selected") or datetime.min.replace(tzinfo=timezone.utc))
             for channel in channels:
                 print(f"Channel: {channel['channel_username']}")
                 if channel['channel_username'] in ast.literal_eval(LIST_CHANNEL):
@@ -221,7 +221,8 @@ class FirestoreManager:
                 return None
 
             # Sort channels by 'last_selected' (assumed to be a comparable value like a timestamp)
-            channels.sort(key=lambda ch: ch.get(field_name, 0))
+            one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+            channels.sort(key=lambda ch: (ch.get(field_name, one_year_ago) or one_year_ago))
             for channel in channels:
                 print(f"Channel: {channel['channel_username']}")
                 if channel['channel_username'] in ast.literal_eval(LIST_CHANNEL):
@@ -514,16 +515,13 @@ class FirestoreManager:
             print(e)
             return False
 
-    def select_video_for_upload(self):
-        video_uploaded_part1 = self.select_video_uploaded_part1()
-        if video_uploaded_part1:
-            return video_uploaded_part1
+    def select_video_for_upload(self, channel_username) -> dict:
         
         conditions = {
             
             "process_status": "completed",
-            "upload_status": "not_uploaded",
-            "channel_username": ast.literal_eval(LIST_CHANNEL),
+            "upload_status": ["not_uploaded",'error'],
+            "channel_username": channel_username,
             "type": VIDEO_TYPE
             
         }
@@ -588,14 +586,30 @@ class FirestoreManager:
         # Limit the query to one result.
         query = query.limit(1)
         results = query.get()
-        
+
         if results:
             video = results[0].to_dict()
             video["video_id"] = results[0].id  # include the document ID
             return video
-        else:
-            print("No video found with the provided conditions.")
-            return None
+
+        # Retry without order_by (documents missing the order field are excluded by Firestore)
+        if order:
+            print("No video found with order_by, retrying without order...")
+            query_no_order = self.db.collection("videos")
+            for field, value in conditions.items():
+                if isinstance(value, list):
+                    query_no_order = query_no_order.where(filter=FieldFilter(field, "in", value))
+                else:
+                    query_no_order = query_no_order.where(filter=FieldFilter(field, "==", value))
+            query_no_order = query_no_order.limit(1)
+            results = query_no_order.get()
+            if results:
+                video = results[0].to_dict()
+                video["video_id"] = results[0].id
+                return video
+
+        print("No video found with the provided conditions.")
+        return None
 
 
     def update_video(self, video_id: str, update_data: dict) -> None:
@@ -800,7 +814,7 @@ if __name__ == "__main__":
 
     # Create an instance of FirestoreManager.
     fm = FirestoreManager(service_account_path)
-    video = fm.select_video_for_upload()
+    video = fm.select_video_for_upload('bao_u_review')
     print(video)
     #video = fm.select_video_uploaded_part1()
     # channel = fm.select_channel_by_list("ancient", ast.literal_eval(LIST_CHANNEL))

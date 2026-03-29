@@ -18,13 +18,16 @@ def fetch_video_status(video):
 def switch_account(page, channel_username):
     try:
         print("click avatar")
+        sleep(15)
         avatar = page.locator('//*[@id="avatar-btn"]')
         if avatar.count() == 0:
             account_btn = page.locator('//*[@id="account-button"]')
             if account_btn.count() == 0:
-                print("Không tìm thấy nút tài khoản.")
+                account_btn = page.locator('//ytcp-topbar-menu-button-renderer[@tabindex=0]')
+                if account_btn.count() == 0:
+                    print("Không tìm thấy nút tài khoản.")
+                    return False
                 
-                return False
             account_btn.click()
         else:
             avatar.click()
@@ -35,12 +38,17 @@ def switch_account(page, channel_username):
 
         item = dropdown.locator('#primary-text-container').nth(2)  # 0-based → phần tử thứ 3
         #item.scroll_into_view_if_needed()
-
+        if item.count() == 0:
+            print("Không tìm thấy phần tử trong dropdown.")
+            return False
         item.click()
         print("click switch account")
         time.sleep(5)
     
         account_locator = page.locator("ytd-account-item-section-renderer").get_by_text(channel_username)
+        if account_locator.count() == 0:
+            print(f"Không tìm thấy tài khoản với username: {channel_username}")
+            return False
         account_locator.click() # Để click vào phần tử
         
         print("click account")

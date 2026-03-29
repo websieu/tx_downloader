@@ -123,19 +123,14 @@ def download_project_for_upload(video, project_path="project_upload"):
 
     video_id = video['video_id']
     upload_status = video['upload_status']
-    if(upload_status == "not_uploaded"):
-        part_1_link = video['part_1_link']
-        if(part_1_link != ''):
-            mp4_link = part_1_link
-        else:
-            mp4_link = video['hg_link']
-    else:
-        mp4_link = video['part_2_link']
-    
+
+    mp4_link = video['hg_link']
+    print(f"mp4_link: {mp4_link}")
     thumb_link = video['thumb_link']
     mp4_link = mp4_link.replace("blob/main", "resolve/main")
     if(thumb_link):
         thumb_link = thumb_link.replace("blob/main", "resolve/main")
+    print(f"thumnb_link: {thumb_link}")
 
     title = video['title']
     file_name = title_to_slug(title)
@@ -153,6 +148,7 @@ def download_project_for_upload(video, project_path="project_upload"):
     print(f"Downloading thumb to {thumb_path} ...")
     send_telegram_message(f"Downloading video to {mp4_path} ...")
     if(not os.path.exists(mp4_path)):
+        print(f"mp4_link: {mp4_link}")
         data_down = download_with_resume(mp4_link, mp4_path)
         #data_down = download_zip(mp4_link, mp4_path)
         if(not data_down):

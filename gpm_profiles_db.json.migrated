@@ -1,0 +1,30 @@
+{
+  "profiles": [
+    {
+      "id": "b86fd19a-db21-4a62-926d-6dc8753cd530",
+      "name": "Profile_3182",
+      "proxy": "",
+      "note": "",
+      "automation": false,
+      "ip": "113.190.170.121",
+      "location": "Hanoi (VN)",
+      "timezone": "Asia/Bangkok",
+      "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "cores": 12,
+      "memory": 32
+    },
+    {
+      "id": "a32b0f51-5c28-4321-af52-29742ab362c6",
+      "name": "Raymondt",
+      "proxy": "",
+      "note": "",
+      "automation": false,
+      "ip": "113.190.170.121",
+      "location": "Hanoi (VN)",
+      "timezone": "Asia/Bangkok",
+      "gpu": "ANGLE (AMD, AMD Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "cores": 16,
+      "memory": 32
+    }
+  ]
+}

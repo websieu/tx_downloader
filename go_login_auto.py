@@ -4,7 +4,7 @@ import traceback
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from gologin import GoLogin
-import pychrome
+
 from lib.browser import Browser
 
 import re
@@ -118,43 +118,103 @@ class ManageDriver:
             print("Error closing all:")
             print(e)
 
-def start_fetch_book(url):
+def start_fetch_book(url, retry_attempt=0, start_chapter=1, existing_text=""):
     try:
-        book_id = re.search(r"/book/(\d+)/?", url).group(1)   # "49983" (string)
+        book_id = re.search(r"/book/(\d+)/?", url).group(1)
         if not book_id:
             print("Book ID not found in URL")
             return False
         fetch_url = 'https://www.69shuba.com/book/' + book_id + '/'
+        os.makedirs(f"projects/{book_id}", exist_ok=True)
         output_file = f"projects/{book_id}/{book_id}.txt"
-        if(os.path.exists(output_file)):
+        if os.path.exists(output_file) and retry_attempt == 0:
             print(f"File {output_file} already exists. Skipping fetch.")
             return True
-        # token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NDljMTNlYWM3ZDdkNDJhNDI3ZWYyZGEiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2NTJiYmQzMDRjOWNjMGUwNDliYjU0MWYifQ.kyKlIkpusfvd4BhHzjBQymYDkd40w1-PPotSKxy_IPE'
-        # port = 3800
+
         md = ManageDriver(gl_token=GO_LOGIN_TOKEN, port=REMOTE_PORT)
         md.start_gl(gl_profile=GL_PROFILE)
         rs_driver = md.create_driver(fetch_url)
         if not rs_driver:
             print("Failed to create driver.")
-            #md.close_all()
             return False
-        data = md.script_get("fetch.js")
-        data = "".join(data)
-        if(data == "error"):
-            print("error fetch data")
+
+        result = md.script_get("fetch.js")
+
+        if isinstance(result, dict):
+            status = result.get("status", "error")
+            text = result.get("text", "")
+            current_chapter = result.get("currentChapter", 0)
+            total_chapters = result.get("totalChapters", 0)
+            error_msg = result.get("error", "")
+
+            if existing_text and text:
+                combined_text = existing_text + "\n\n" + text
+            else:
+                combined_text = text if text else existing_text
+
+            if status == "error":
+                print(f"Error at chapter {current_chapter}: {error_msg}")
+                md.close_all()
+                if retry_attempt < 5:
+                    print(f"Retrying... (attempt {retry_attempt + 1}/5)")
+                    time.sleep(30)
+                    return start_fetch_book(url, retry_attempt + 1,
+                                           current_chapter + 1, combined_text)
+                if combined_text:
+                    print("Saving partial content...")
+                    with open(output_file, "w", encoding="utf-8") as f:
+                        f.write(combined_text)
+                return False
+
+            elif status == "success":
+                from lib.chapter_validator import validate_chapters
+                validation = validate_chapters(
+                    combined_text,
+                    expected_count=total_chapters,
+                    source="69shuba",
+                    tolerance=5
+                )
+                if validation["duplicate_titles"]:
+                    from lib.chapter_validator import remove_duplicate_chapters
+                    combined_text, removed = remove_duplicate_chapters(combined_text, source="69shuba")
+                    if removed:
+                        from lib.telegram import send_telegram_message
+                        send_telegram_message(f"[69shuba] Auto-removed {len(removed)} duplicate chapter(s)")
+                if not validation["is_valid"]:
+                    msg = f"[69shuba] Chapter validation FAILED\n{validation['missing_info']}"
+                    print(f"WARNING: {msg}")
+                    from lib.telegram import send_telegram_message
+                    send_telegram_message(msg)
+
+                with open(output_file, "w", encoding="utf-8") as f:
+                    f.write(combined_text)
+                md.close_all()
+                return True
+            else:
+                print(f"Unknown status: {status}")
+                md.close_all()
+                return False
+
+        elif isinstance(result, list):
+            data = "\n\n".join(result)
+            if data == "error":
+                print("error fetch data")
+                md.close_all()
+                return False
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(data)
+            md.close_all()
+            return True
+
+        else:
+            print("Unexpected result format")
             md.close_all()
             return False
-        
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(data)
-        
-        md.close_all()
-        return True
+
     except Exception as e:
         print("An error occurred while fetching the book:")
         print(e)
-        # if md:
-        #     md.close_all()
+        traceback.print_exc()
         return False
 
 def get_download_link(url, retry=0):
@@ -228,7 +288,8 @@ def upload_ytb_browser(channel_username, video_path, thumb_path, title, descript
 
         ### click upload btn
         time.sleep(5)
-        btn_upload = md.driver.page.locator('//*[@id="create-icon"]').click()
+        #btn_upload = md.driver.page.locator('//*[@id="create-icon"]').click()
+        btn_upload = md.driver.page.locator("//ytcp-button[contains(@class,'ytcpAppHeaderCreateIcon') and @icon='yt-sys-icons:video_call']").click()
         time.sleep(5)
         btn_upload_video = md.driver.page.locator('//*[@id="text-item-0"]').click()
         time.sleep(5)
@@ -293,10 +354,16 @@ def upload_ytb_browser(channel_username, video_path, thumb_path, title, descript
             return False
         
         thumb_path = str(Path(thumb_path).resolve())  # Convert to absolute path
+        
         if os.name == "nt":
             thumb_path = thumb_path.replace("/", "\\")  # Ensure Windows path format
-        upload_thumb.set_input_files(thumb_path)
-        time.sleep(5)
+        if  os.path.exists(thumb_path):
+            try:
+                upload_thumb.set_input_files(thumb_path)
+                time.sleep(5)
+            except WebDriverException as e:
+                print("WebDriverException while uploading thumbnail:")
+                print(e)
 
         ### fetch video url ###
         video_id = None
@@ -522,8 +589,4 @@ def set_files_via_cdp(page, css_selector, files, frame=None):
 
 if __name__ == "__main__":
     
-    fetch_list_video(channel_username='@Baoureview299', gl_profile='68a2cb0d24daa090cccefcae')
-    # while i < 8:
-    #     ran_channel = random.choice(list_channel)
-    #     upload_ytb(channel_username=ran_channel)
-    #     i += 1
+   start_fetch_book("https://www.69shuba.com/book/31557/")

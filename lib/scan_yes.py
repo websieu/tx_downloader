@@ -1,64 +1,65 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import os
-import re
-import json
 from pathlib import Path
-from time import sleep
+import re
+import time
+from typing import List
 
-def scan_segments(folder: str, output_json: str = "result.json"):
+def print_folders_over_yes_ratio_in_out(input_folder: str, yes_ratio: float = 0.6) -> List[str]:
     """
-    Quét toàn bộ file segment_{idx}.txt trong folder,
-    nếu file có chứa 'Yes<a>' thì lưu idx vào mảng kết quả.
+    Với mỗi thư mục con trong input_folder:
+      - Quét folder con 'out' (input_folder/<child>/out)
+      - Lọc file dạng segment_{idx}.txt (idx là số)
+      - Đếm file chứa chuỗi 'YES' (phân biệt hoa/thường theo yêu cầu)
+      - Nếu yes_count / total_files > yes_ratio => in ra tên <child>
+
+    Trả về: danh sách tên thư mục đạt ngưỡng.
     """
-    folder_path = Path(folder)
-    if not folder_path.is_dir():
-        raise NotADirectoryError(f"{folder} không phải là folder hợp lệ")
+    base = Path(input_folder)
+    if not base.is_dir():
+        raise ValueError(f"Not a directory: {input_folder}")
 
-    pattern = re.compile(r"segment_(\d+)\.txt$")
-    result = []
+    seg_pattern = re.compile(r"^segment_(\d+)\.txt$", re.IGNORECASE)
 
-    for file in folder_path.iterdir():
-        if file.is_file():
-            match = pattern.match(file.name)
-            if match:
-                idx = int(match.group(1))
-                try:
-                    with file.open("r", encoding="utf-8") as f:
-                        content = f.read()
-                        if "Yes<a>" in content:
-                            result.append(idx)
-                except Exception as e:
-                    print(f"⚠️ Lỗi khi đọc {file}: {e}")
+    passed = []
+    for child in sorted(p for p in base.iterdir() if p.is_dir()):
+        out_dir = child / "out"
+        if not out_dir.is_dir():
+            continue  # bỏ qua nếu không có thư mục out
 
-    result.sort()
-    with open(output_json, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+        # Lấy các file hợp lệ: segment_{idx}.txt
+        files = [f for f in out_dir.iterdir() if f.is_file() and seg_pattern.match(f.name)]
+        if not files:
+            continue  # không có file phù hợp thì bỏ qua
 
-    print(f"✅ Đã lưu {len(result)} idx vào {output_json}")
+        total = 0
+        yes_count = 0
+        for f in files:
+            total += 1
+            try:
+                with f.open("r", encoding="utf-8", errors="ignore") as fh:
+                    for line in fh:
+                        if "YES" in line:  # nếu muốn không phân biệt hoa/thường: if "yes" in line.lower():
+                            yes_count += 1
+                            break
+            except Exception:
+                # lỗi đọc file: coi như không có YES, tiếp tục file khác
+                pass
 
-def make_urls_from_result(result_file: str = "result.json", output_file: str = "url.json"):
-    """
-    Đọc idx từ result.json, tạo URL dạng:
-    https://69shuba.com/book/{idx}/
-    rồi lưu vào url.json
-    """
-    if not Path(result_file).exists():
-        raise FileNotFoundError(f"{result_file} không tồn tại")
+        if total > 0 and (yes_count / total) > yes_ratio:
+            print(child.name)
+            passed.append(child.name)
 
-    with open(result_file, "r", encoding="utf-8") as f:
-        idx_list = json.load(f)
 
-    urls = [f"https://69shuba.com/book/{idx}/" for idx in idx_list]
+    return passed
 
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(urls, f, ensure_ascii=False, indent=2)
-
-    print(f"✅ Đã tạo {len(urls)} URL và lưu vào {output_file}")
+# Ví dụ dùng:
+# print_folders_over_yes_ratio_in_out("/path/to/input_folder")
 if __name__ == "__main__":
-    # Thay '.' bằng đường dẫn folder chứa các file txt
     while True:
-        scan_segments(folder="first_chap_out")
-        sleep(10*60)  # chờ 10 phút rồi quét lại
-    #make_urls_from_result(result_file="result.json", output_file="url.json")
+        input_folder = "first_chap_out"
+        yes_ratio = 0.5
+        data = print_folders_over_yes_ratio_in_out(input_folder, yes_ratio)
+        if len(data) == 0:
+            print("No folder passed the threshold.")
+        else:
+            print(f"Total folders passed the threshold: {len(data)}")
+        time.sleep(30)  # chờ 1 giờ rồi quét lại

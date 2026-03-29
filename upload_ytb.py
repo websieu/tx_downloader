@@ -77,16 +77,32 @@ class UploadSchedulerFirebase:
             #self.fm.update_video(video_id, update_data={"time_completed": firestore.SERVER_TIMESTAMP})
             return None
         return channel
-    
-    def get_data_to_upload(self):
-        video = self.fetch_video()
-        if(not video):
-            return None
-        channel = self.fetch_channel(video)
-        
+    def fetch_channel_for_upload(self):
+        channel = self.fm.select_channel_by_field('last_selected_upload')
         if(not channel):
             print("not found channel to process...")
             return None
+        self.fm.update_channel(channel['channel_username'], {'last_selected_upload': firestore.SERVER_TIMESTAMP})
+
+        if(channel["status"] != "active"):
+            print(f"channel is not activate {channel['channel_username']}")
+            return None
+        if(not self.fm.is_last_upload_older_than_3_hours(channel)):
+            print("channel need to wait to upload...")
+            return None
+        return channel
+    
+    def get_data_to_upload(self):
+        channel = self.fetch_channel_for_upload()
+        if not channel:
+            print("not found channel for upload")
+            return None
+        video = self.fm.select_video_for_upload(channel['channel_username'])
+       
+        if(not video):
+            print("not found video for upload")
+            return None
+        
         data_download = download_project_for_upload(video, self.project_path)
         if(not data_download):
             print("cannot download video data")
@@ -316,9 +332,8 @@ class UploadSchedulerFirebase:
                 text_write = "Full"
             else:
                 text_write = part_name
-            
-            write_text_on_image(text_write, img_path, out_path)
-            
+            if os.path.exists(img_path):
+                write_text_on_image(text_write, img_path, out_path)
 
             file_name = title_to_slug(title)
             channel_config = self.channel_config
@@ -371,5 +386,6 @@ if __name__ == "__main__":
     fm = FirestoreManager(service_account_path)
 
     scheduler = UploadSchedulerFirebase(fm)
-    scheduler.schedule_video()
+    channel  = scheduler.fetch_channel_for_upload()
+    print("channel for upload: ", channel)
    

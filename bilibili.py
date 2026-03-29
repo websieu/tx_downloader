@@ -1,6 +1,7 @@
 from time import sleep
 import os
 import time
+import traceback
 
 import firebase_admin
 
@@ -51,8 +52,13 @@ def main(fm: FirestoreManager):
     os.makedirs(f"projects/{video['video_id']}", exist_ok=True)
 
     send_telegram_message(f"Downloading video {video['video_id']}")
-
-    download_result = get_download_link(video['bili_link'])
+    bili_link = process_bili_link(video['bili_link'], video['video_id'])
+    if not bili_link:
+        print(f"Invalid Bilibili link for video: {video['video_id']}")
+        fm.update_video(video['video_id'], {"process_status": "failed"})
+        send_telegram_message(f"Invalid Bilibili link for video: {video['video_id']}")
+        return None
+    download_result = get_download_link(bili_link)
     
     if not download_result:
         print(f"Failed to download video: {video['video_id']}")
@@ -117,6 +123,21 @@ def loop_firebase():
             fm = FirestoreManager(service_account_path)
         main(fm)
         sleep(10)
+
+def process_bili_link(bili_link, video_id):
+    try:
+        if "https://huggingface.co/" in bili_link:
+            parrent_id = video_id.split("_")[0]
+            part_name = int(video_id.split("_")[1])
+            if part_name == 1:
+                return f"https://www.bilibili.com/video/{parrent_id}"
+            else:
+                return f"https://www.bilibili.com/video/{parrent_id}?p={part_name}"
+        return bili_link
+    except Exception as e:
+        print(f"process_bili_link error: {e}")
+        traceback.print_exc()
+        return None
 
 if __name__ == "__main__":
     loop_firebase()
