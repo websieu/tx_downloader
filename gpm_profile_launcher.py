@@ -17,14 +17,19 @@ Usage:
 import argparse
 import base64
 import json
+import logging
 import os
 import random
 import subprocess
 import sys
+import traceback
 import uuid
 import urllib.request
 import ssl
 import time
+
+# Reuse profile_sync logger if available, otherwise create own
+logger = logging.getLogger("profile_sync")
 
 # === CONFIG ===
 PROFILE_BASE_DIR = r"D:\Youtube\profile"
@@ -133,6 +138,7 @@ def fetch_json(url, timeout=10):
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
+        logger.warning(f"fetch_json failed for {url}: {e}")
         print(f"  [WARN] Failed to fetch {url}: {e}")
         return None
 
@@ -143,6 +149,7 @@ def get_ip_info(proxy=None):
     Nếu có proxy, lấy IP của proxy. Nếu không, lấy IP thật.
     Returns: dict {ip, lat, lon, timezone, country_code}
     """
+    logger.info(f"get_ip_info called, proxy={proxy}")
     print("[*] Looking up IP geolocation...")
 
     if proxy:
@@ -151,6 +158,7 @@ def get_ip_info(proxy=None):
         proxy_url = f"http://{proxy_host}:{proxy_port}"
         if proxy_user:
             proxy_url = f"http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
+        logger.info(f"Proxy parsed: host={proxy_host}, port={proxy_port}, user={'yes' if proxy_user else 'no'}")
 
         # Use proxy to get our outbound IP
         proxy_handler = urllib.request.ProxyHandler({
@@ -170,8 +178,10 @@ def get_ip_info(proxy=None):
                     data = json.loads(resp.read().decode("utf-8"))
                     ip = data.get("ip") or data.get("origin", "").split(",")[0].strip()
                     if ip:
+                        logger.info(f"Proxy IP detected: {ip} via {api}")
                         break
             except Exception as e:
+                logger.warning(f"Proxy check {api} failed: {e}\n{traceback.format_exc()}")
                 print(f"  [WARN] {api} via proxy failed: {e}")
                 continue
 
@@ -296,8 +306,12 @@ def generate_noise_values():
     }
 
 
-def build_gpm_fg(geo_info, proxy_info=None):
-    """Build the full gpm_fg.dat JSON config."""
+def build_gpm_fg(geo_info, proxy_info=None, name=None, canvas_noise=False):
+    """Build the full gpm_fg.dat JSON config.
+
+    canvas_noise: if False (default), canvas runs without noise (mode "off").
+    Canvas noise has been observed to trigger bot-detection on YouTube.
+    """
     gpu = random.choice(GPU_PROFILES)
     hw = random.choice(HARDWARE_COMBOS)
     fonts = random.choice(FONT_SETS)
@@ -313,7 +327,7 @@ def build_gpm_fg(geo_info, proxy_info=None):
     config = {
         "gpm": {
             "version": "2026.01",
-            "name": f"AutoProfile_{random.randint(1000, 9999)}",
+            "name": name or f"AutoProfile_{random.randint(1000, 9999)}",
             "userAgent": "",
             "timezone": geo_info["timezone"],
             "font": {
@@ -348,10 +362,11 @@ def build_gpm_fg(geo_info, proxy_info=None):
                 "numberInput": 1,
                 "numberOutput": 1,
             },
-            "canvas": {
-                "mode": "noise",
-                **noise["canvas"],
-            },
+            "canvas": (
+                {"mode": "noise", **noise["canvas"]}
+                if canvas_noise
+                else {"mode": "off", **noise["canvas"]}
+            ),
             "clientRect": {
                 "mode": "noise",
                 "noise": noise["clientRect"],
@@ -507,11 +522,15 @@ def create_profile(proxy=None, automation=False):
     with open(os.path.join(gpm_soft_path, "extension_dependencies.json"), "w") as f:
         f.write("[ ] ")
 
-    # 7. Write minimal Local State & First Run
-    with open(os.path.join(profile_path, "Local State"), "w") as f:
-        f.write("{}")
-    with open(os.path.join(profile_path, "First Run"), "w") as f:
-        f.write("")
+    # 7. Write minimal Local State & First Run (skip if already exists — preserve encryption keys)
+    local_state = os.path.join(profile_path, "Local State")
+    if not os.path.exists(local_state):
+        with open(local_state, "w") as f:
+            f.write("{}")
+    first_run = os.path.join(profile_path, "First Run")
+    if not os.path.exists(first_run):
+        with open(first_run, "w") as f:
+            f.write("")
 
     print(f"[*] Profile written to: {profile_path}")
 

@@ -589,4 +589,4 @@ def set_files_via_cdp(page, css_selector, files, frame=None):
 
 if __name__ == "__main__":
     
-   start_fetch_book("https://www.69shuba.com/book/31557/")
+   start_fetch_book("https://www.69shuba.com/book/35982/")

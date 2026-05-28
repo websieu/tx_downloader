@@ -3,10 +3,18 @@ BINMUN Profile Manager GUI - PyQt6
 SQLite backend, sidebar + table layout.
 """
 
-import json
 import os
 import sys
+
+# Fix for Nuitka --windows-disable-console: sys.stdout/stderr are None → print() and tqdm crash
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+
+import json
 import shutil
+import time
 import sqlite3
 import subprocess
 import threading
@@ -26,6 +34,14 @@ from PyQt6.QtGui import QFont, QIcon
 
 from gpm_profile_launcher import (
     parse_proxy, get_ip_info, build_gpm_fg,
+)
+from lib.profile_sync import (
+    ensure_repo, download_profile, upload_profile, delete_profile_zip,
+    get_firestore_db, get_machine_id as sync_machine_id,
+    fb_create_profile, fb_update_profile,
+    fb_acquire_lock, fb_release_lock, fb_force_acquire_lock, fb_get_running_on,
+    fb_delete_profile, fb_check_deleted, fb_sync_profiles,
+    fb_request_stop, fb_check_stop_request, fb_clear_stop_request,
 )
 
 # === DEFAULTS ===
@@ -90,6 +106,7 @@ def get_db():
             proxy TEXT DEFAULT '',
             note TEXT DEFAULT '',
             automation INTEGER DEFAULT 0,
+            canvas_noise INTEGER DEFAULT 0,
             status TEXT DEFAULT 'stopped',
             ip TEXT DEFAULT '',
             location TEXT DEFAULT '',
@@ -103,11 +120,15 @@ def get_db():
             last_run TEXT DEFAULT ''
         )
     """)
-    for col, default in [("created_at", "''"), ("last_run", "''")]:
+    for col, default in [("created_at", "''"), ("last_run", "''"), ("pending_sync", "''")]:
         try:
             conn.execute(f"ALTER TABLE profiles ADD COLUMN {col} TEXT DEFAULT {default}")
         except Exception:
             pass
+    try:
+        conn.execute("ALTER TABLE profiles ADD COLUMN canvas_noise INTEGER DEFAULT 0")
+    except Exception:
+        pass
     conn.commit()
 
     json_db = os.path.join(APP_DIR, "gpm_profiles_db.json")
@@ -117,10 +138,11 @@ def get_db():
                 old = json.load(f)
             for p in old.get("profiles", []):
                 conn.execute(
-                    "INSERT OR IGNORE INTO profiles (id,name,proxy,note,automation,ip,location,timezone,gpu,cores,memory) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO profiles (id,name,proxy,note,automation,canvas_noise,ip,location,timezone,gpu,cores,memory) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (p["id"], p.get("name", ""), p.get("proxy", ""), p.get("note", ""),
                      int(p.get("automation", False)),
+                     int(p.get("canvas_noise", False)),
                      p.get("ip", ""), p.get("location", ""), p.get("timezone", ""),
                      p.get("gpu", ""), p.get("cores", 0), p.get("memory", 0)))
             conn.commit()
@@ -205,12 +227,16 @@ def find_font_source(profile_dir):
 
 
 def check_proxy(proxy_str):
+    import logging
+    _logger = logging.getLogger("profile_sync")
     try:
+        _logger.info(f"check_proxy called: {proxy_str}")
         geo = get_ip_info(proxy_str)
+        _logger.info(f"check_proxy result: {geo}")
         if geo and geo.get("ip") and geo["ip"] != "127.0.0.1":
             return geo
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.error(f"check_proxy exception: {e}\n{__import__('traceback').format_exc()}")
     return None
 
 
@@ -258,10 +284,14 @@ def write_profile_files(profile_path, config):
         f.write(b64)
     with open(os.path.join(gpm, "extension_dependencies.json"), "w") as f:
         f.write("[ ] ")
-    with open(os.path.join(profile_path, "Local State"), "w") as f:
-        f.write("{}")
-    with open(os.path.join(profile_path, "First Run"), "w") as f:
-        f.write("")
+    local_state = os.path.join(profile_path, "Local State")
+    if not os.path.exists(local_state):
+        with open(local_state, "w") as f:
+            f.write("{}")
+    first_run = os.path.join(profile_path, "First Run")
+    if not os.path.exists(first_run):
+        with open(first_run, "w") as f:
+            f.write("")
 
 
 # ============================================================
@@ -325,14 +355,21 @@ class ProfileDialog(QDialog):
             layout.addWidget(entry)
             self.fields[key] = entry
 
-        self.auto_cb = QCheckBox("Enable Automation (CDP)")
-        self.auto_cb.setChecked(data.get("automation", False))
-        self.auto_cb.setStyleSheet(f"""
+        cb_style = f"""
             QCheckBox {{ color: white; margin-top: 12px; background: transparent; }}
             QCheckBox::indicator {{ width: 16px; height: 16px; border: 2px solid {C_BORDER}; border-radius: 3px; }}
             QCheckBox::indicator:checked {{ background: {C_ACCENT}; border-color: {C_ACCENT}; }}
-        """)
+        """
+
+        self.auto_cb = QCheckBox("Enable Automation (CDP)")
+        self.auto_cb.setChecked(data.get("automation", False))
+        self.auto_cb.setStyleSheet(cb_style)
         layout.addWidget(self.auto_cb)
+
+        self.canvas_noise_cb = QCheckBox("Canvas Noise (off by default — noise may flag on YouTube)")
+        self.canvas_noise_cb.setChecked(data.get("canvas_noise", False))
+        self.canvas_noise_cb.setStyleSheet(cb_style)
+        layout.addWidget(self.canvas_noise_cb)
 
         btn_frame = QWidget()
         btn_frame.setStyleSheet("background: transparent;")
@@ -365,6 +402,7 @@ class ProfileDialog(QDialog):
             "proxy": self.fields["proxy"].text().strip(),
             "note": self.fields["note"].text().strip(),
             "automation": self.auto_cb.isChecked(),
+            "canvas_noise": self.canvas_noise_cb.isChecked(),
         }
         self.accept()
 
@@ -413,6 +451,8 @@ class ProfileRow(QFrame):
         badge_bg, badge_txt = {
             "running": (C_GREEN, "RUNNING"),
             "starting": (C_YELLOW, "STARTING"),
+            "syncing": ("#3498db", "SYNCING"),
+            "cloud_running": ("#8e44ad", "REMOTE"),
         }.get(status, ("#4b5563", "STOPPED"))
         badge = QLabel(badge_txt)
         badge.setFixedSize(85, 22)
@@ -467,6 +507,7 @@ class ProfileRow(QFrame):
         act_layout.setSpacing(3)
 
         pid = self.profile_id
+        is_remote = status == "cloud_running"
         if status == "running":
             ss_btn = QPushButton("Stop")
             ss_btn.setFixedSize(68, 28)
@@ -477,6 +518,16 @@ class ProfileRow(QFrame):
             ss_btn.setFixedSize(68, 28)
             ss_btn.setStyleSheet(_btn_style(C_YELLOW, C_YELLOW, 5) + " QPushButton { font-size: 11px; }")
             ss_btn.setEnabled(False)
+        elif status == "syncing":
+            ss_btn = QPushButton("Syncing..")
+            ss_btn.setFixedSize(68, 28)
+            ss_btn.setStyleSheet(_btn_style("#3498db", "#3498db", 5) + " QPushButton { font-size: 10px; }")
+            ss_btn.setEnabled(False)
+        elif is_remote:
+            ss_btn = QPushButton("Remote")
+            ss_btn.setFixedSize(68, 28)
+            ss_btn.setStyleSheet(_btn_style("#8e44ad", "#6c3483", 5) + " QPushButton { font-size: 10px; font-weight: bold; }")
+            ss_btn.clicked.connect(lambda: on_start(pid))
         else:
             ss_btn = QPushButton("Start")
             ss_btn.setFixedSize(68, 28)
@@ -486,12 +537,18 @@ class ProfileRow(QFrame):
         edit_btn = QPushButton("✏")
         edit_btn.setFixedSize(30, 28)
         edit_btn.setStyleSheet(_btn_style(C_CARD, C_BORDER, 5) + " QPushButton { font-size: 13px; }")
-        edit_btn.clicked.connect(lambda: on_edit(pid))
+        if not is_remote:
+            edit_btn.clicked.connect(lambda: on_edit(pid))
+        else:
+            edit_btn.setEnabled(False)
 
         del_btn = QPushButton("✕")
         del_btn.setFixedSize(30, 28)
         del_btn.setStyleSheet(_btn_style(C_CARD, C_RED, 5) + " QPushButton { font-size: 13px; }")
-        del_btn.clicked.connect(lambda: on_delete(pid))
+        if not is_remote:
+            del_btn.clicked.connect(lambda: on_delete(pid))
+        else:
+            del_btn.setEnabled(False)
 
         act_layout.addWidget(ss_btn)
         act_layout.addWidget(edit_btn)
@@ -514,6 +571,7 @@ class App(QMainWindow):
     sig_status     = pyqtSignal(str)
     sig_render     = pyqtSignal()
     sig_error      = pyqtSignal(str, str)
+    sig_confirm    = pyqtSignal(str, str, object)  # title, message, callback(bool)
 
     def __init__(self):
         super().__init__()
@@ -526,6 +584,11 @@ class App(QMainWindow):
 
         self.settings = load_settings()
         self.conn = get_db()
+        self._db_lock = threading.Lock()
+        self._uploading_lock = threading.Lock()
+        self._uploading_profiles = set()
+        self.fb_db = None
+        self._init_firebase()
         self.page = 0
         self.search_text = ""
         self._row_widgets = []
@@ -538,10 +601,12 @@ class App(QMainWindow):
         self.sig_status.connect(self.status_lbl.setText)
         self.sig_render.connect(self._render)
         self.sig_error.connect(lambda t, m: QMessageBox.critical(self, t, m))
+        self.sig_confirm.connect(self._on_confirm)
 
         self._sync_running_status()
         self._render()
         self._start_watchdog()
+        self._auto_cloud_sync()
 
     def _tab_style(self, active):
         if active:
@@ -643,6 +708,14 @@ class App(QMainWindow):
             self._tab_btns[key] = btn
 
         tb_layout.addStretch()
+
+        self.sync_btn = QPushButton("Sync Cloud")
+        self.sync_btn.setFixedSize(100, 30)
+        self.sync_btn.setStyleSheet(_btn_style(C_CARD, C_BORDER, 4) + f" QPushButton {{ font-size: 11px; color: {C_ACCENT}; font-weight: bold; }}")
+        self.sync_btn.clicked.connect(self._manual_cloud_sync)
+        self.sync_btn.setVisible(bool(self.settings.get("sync_enabled")))
+        tb_layout.addWidget(self.sync_btn)
+
         ct_layout.addWidget(topbar)
 
         # Header
@@ -789,11 +862,13 @@ class App(QMainWindow):
     # --- DB ---
 
     def _query(self, sql, params=()):
-        return self.conn.execute(sql, params).fetchall()
+        with self._db_lock:
+            return self.conn.execute(sql, params).fetchall()
 
     def _exec(self, sql, params=()):
-        self.conn.execute(sql, params)
-        self.conn.commit()
+        with self._db_lock:
+            self.conn.execute(sql, params)
+            self.conn.commit()
 
     def _count(self):
         where = self._build_where()
@@ -905,17 +980,138 @@ class App(QMainWindow):
 
     def _start_watchdog(self):
         def _check():
-            rows = self._query("SELECT id, pid FROM profiles WHERE status='running'")
-            changed_ids = []
+            # Detect browser closed externally
+            rows = self._query("SELECT id, pid, name, proxy, note, automation, created_at FROM profiles WHERE status='running'")
+            changed = []
             for row in rows:
                 if not is_pid_alive(row["pid"]):
                     self._exec("UPDATE profiles SET status='stopped', pid=0, cdp_port=0 WHERE id=?",
                                (row["id"],))
-                    changed_ids.append(row["id"])
-            for pid in changed_ids:
-                self.sig_render_one.emit(pid)
+                    changed.append(dict(row))
+            for r in changed:
+                self.sig_render_one.emit(r["id"])
+                self._upload_on_close(r)
+
+            # Check remote stop requests for running profiles
+            self._check_stop_requests()
+
+            # Retry pending sync operations
+            self._retry_pending_sync()
+
         threading.Thread(target=_check, daemon=True).start()
         QTimer.singleShot(5000, self._start_watchdog)
+
+    def _check_stop_requests(self):
+        """Check if another machine requested us to stop any running profiles."""
+        if not self.fb_db or not self.settings.get("sync_enabled"):
+            return
+        rows = self._query("SELECT id, pid, name, proxy, note, automation, created_at FROM profiles WHERE status='running'")
+        for row in rows:
+            requester = fb_check_stop_request(self.fb_db, row["id"])
+            if requester:
+                self.sig_status.emit(f"Stop requested by {requester} for '{row['name']}'")
+                kill_pid_tree(row["pid"])
+                self._exec("UPDATE profiles SET status='stopped', pid=0, cdp_port=0 WHERE id=?",
+                           (row["id"],))
+                self.sig_render_one.emit(row["id"])
+                fb_clear_stop_request(self.fb_db, row["id"])
+                self._upload_on_close(dict(row))
+
+    def _retry_pending_sync(self):
+        """Retry failed upload/release for profiles with pending_sync."""
+        sync_enabled, sync_repo, sync_token = self._get_sync()
+        if not sync_enabled:
+            return
+        pending = self._query("SELECT id, name FROM profiles WHERE pending_sync='upload_and_release'")
+        if not pending:
+            return
+        profile_dir = self.settings.get("profile_dir", DEFAULT_PROFILE_DIR)
+        for row in pending:
+            pid = row["id"]
+            # Skip if already uploading
+            with self._uploading_lock:
+                if pid in self._uploading_profiles:
+                    continue
+            profile_path = os.path.join(profile_dir, pid)
+            try:
+                ok, _ = upload_profile(pid, profile_path, sync_repo, sync_token)
+                if ok:
+                    fb_release_lock(self.fb_db, pid)
+                    self._exec("UPDATE profiles SET pending_sync='' WHERE id=?", (pid,))
+                    self.sig_status.emit(f"'{row['name']}' sync retry succeeded")
+            except Exception:
+                pass  # Will retry next watchdog cycle
+
+    def _upload_on_close(self, row):
+        """Upload profile to cloud when browser is closed (externally or via Stop)."""
+        sync_enabled, sync_repo, sync_token = self._get_sync()
+        if not sync_enabled:
+            return
+        profile_id = row["id"]
+
+        # Dedup: skip if already uploading this profile
+        with self._uploading_lock:
+            if profile_id in self._uploading_profiles:
+                return
+            self._uploading_profiles.add(profile_id)
+
+        profile_dir = self.settings.get("profile_dir", DEFAULT_PROFILE_DIR)
+        profile_path = os.path.join(profile_dir, profile_id)
+        name = row["name"]
+
+        self._exec("UPDATE profiles SET status='syncing' WHERE id=?", (profile_id,))
+        self.sig_render_one.emit(profile_id)
+
+        def _do():
+            try:
+                # Check if profile was deleted on cloud while running
+                try:
+                    if fb_check_deleted(self.fb_db, profile_id):
+                        self.sig_status.emit(f"'{name}' deleted on cloud, skipping upload")
+                        return
+                except Exception:
+                    pass
+
+                # Check if lock was taken over by another machine
+                try:
+                    current_owner = fb_get_running_on(self.fb_db, profile_id)
+                    if current_owner and current_owner != sync_machine_id():
+                        self.sig_status.emit(f"'{name}' taken over by {current_owner}, skipping upload")
+                        return
+                except Exception:
+                    pass
+
+                self.sig_status.emit(f"Uploading '{name}' to cloud...")
+                upload_ok = False
+                release_ok = False
+                try:
+                    ok, msg = upload_profile(profile_id, profile_path, sync_repo, sync_token)
+                    upload_ok = ok
+                    if not ok:
+                        self.sig_status.emit(f"Cloud upload failed: {msg}")
+                except Exception as e:
+                    self.sig_status.emit(f"Cloud upload error: {e}")
+
+                try:
+                    fb_release_lock(self.fb_db, profile_id)
+                    release_ok = True
+                except Exception:
+                    pass
+
+                if upload_ok and release_ok:
+                    self.sig_status.emit(f"'{name}' synced to cloud")
+                    self._exec("UPDATE profiles SET pending_sync='' WHERE id=?", (profile_id,))
+                else:
+                    self._exec("UPDATE profiles SET pending_sync='upload_and_release' WHERE id=?",
+                               (profile_id,))
+                    self.sig_status.emit(f"'{name}' sync failed, will retry")
+            finally:
+                self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
+                self.sig_render_one.emit(profile_id)
+                with self._uploading_lock:
+                    self._uploading_profiles.discard(profile_id)
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _sync_running_status(self):
         rows = self._query("SELECT id, pid FROM profiles WHERE status='running'")
@@ -942,18 +1138,197 @@ class App(QMainWindow):
             self.page += 1
             self._render()
 
+    # --- Cloud Sync helpers ---
+
+    def _init_firebase(self):
+        """Init Firebase if configured."""
+        if not self.settings.get("sync_enabled"):
+            return
+        fb_path = self.settings.get("firebase_path", "").strip()
+        if not fb_path or not os.path.isfile(fb_path):
+            fb_path = os.path.join(APP_DIR, "auth_files", "firebase.json")
+        if os.path.isfile(fb_path):
+            try:
+                self.fb_db = get_firestore_db(fb_path)
+            except Exception as e:
+                print(f"[WARN] Firebase init failed: {e}")
+
+    def _get_sync(self):
+        """Return (enabled, repo_id, token) or (False, None, None)."""
+        if not self.settings.get("sync_enabled"):
+            return False, None, None
+        repo = self.settings.get("sync_repo_id", "").strip()
+        token = self.settings.get("hf_token", "").strip()
+        if not repo or not token:
+            return False, None, None
+        if not self.fb_db:
+            return False, None, None
+        return True, repo, token
+
+    def _on_confirm(self, title, message, callback):
+        """Show question dialog on main thread, call callback(bool) with result."""
+        reply = QMessageBox.question(self, title, message)
+        callback(reply == QMessageBox.StandardButton.Yes)
+
+    def _auto_cloud_sync(self):
+        """Auto-sync profile list from cloud on startup."""
+        enabled, repo, token = self._get_sync()
+        if not enabled:
+            return
+        self._run_cloud_sync(repo, token)
+
+    def _manual_cloud_sync(self):
+        """Manual sync triggered by Sync Cloud button."""
+        enabled, repo, token = self._get_sync()
+        if not enabled:
+            QMessageBox.information(self, "Cloud Sync",
+                "Cloud sync is not enabled.\nGo to Settings to configure HuggingFace sync.")
+            return
+        self._run_cloud_sync(repo, token)
+
+    def _run_cloud_sync(self, repo, token):
+        """Run cloud sync in background thread."""
+        self.sync_btn.setEnabled(False)
+        self.sync_btn.setText("Syncing...")
+
+        def _do():
+            try:
+                self.sig_status.emit("Syncing profiles from cloud...")
+                remote_list, err = fb_sync_profiles(self.fb_db)
+                if err:
+                    self.sig_status.emit(f"Cloud sync failed: {err}")
+                    return
+
+                machine = sync_machine_id()
+                profile_dir = self.settings.get("profile_dir", DEFAULT_PROFILE_DIR)
+
+                # Get local profile IDs and statuses
+                local_map = {}
+                for row in self._query("SELECT id, status FROM profiles"):
+                    local_map[row["id"]] = row["status"]
+
+                added = 0
+                deleted = 0
+                changed = False
+
+                for rp in remote_list:
+                    pid = rp["id"]
+                    is_deleted = rp.get("deleted", False)
+
+                    # --- Handle deleted profiles ---
+                    if is_deleted:
+                        if pid in local_map:
+                            local_path = os.path.join(profile_dir, pid)
+                            if os.path.isdir(local_path):
+                                try:
+                                    shutil.rmtree(local_path)
+                                except Exception:
+                                    pass
+                            self._exec("DELETE FROM profiles WHERE id=?", (pid,))
+                            deleted += 1
+                            changed = True
+                        continue
+
+                    # --- Insert new or update existing profiles ---
+                    r_name = rp.get("name", f"Profile_{pid[:8]}")
+                    r_proxy = rp.get("proxy", "")
+                    r_note = rp.get("note", "")
+                    r_auto = int(rp.get("automation", 0))
+                    r_canvas_noise = int(rp.get("canvas_noise", 0))
+                    r_created = rp.get("created_at", "")
+
+                    if pid not in local_map:
+                        try:
+                            self._exec(
+                                "INSERT OR IGNORE INTO profiles (id, name, proxy, note, automation, canvas_noise, created_at, status) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, 'stopped')",
+                                (pid, r_name, r_proxy, r_note, r_auto, r_canvas_noise, r_created))
+                            added += 1
+                            changed = True
+                            local_map[pid] = "stopped"
+                        except Exception:
+                            continue
+                    else:
+                        self._exec(
+                            "UPDATE profiles SET name=?, proxy=?, note=?, automation=?, canvas_noise=? WHERE id=?",
+                            (r_name, r_proxy, r_note, r_auto, r_canvas_noise, pid))
+                        changed = True
+
+                    # --- Update running status ---
+                    local_status = local_map.get(pid, "stopped")
+                    running_on = rp.get("running_on", "")
+
+                    if running_on and running_on != machine and local_status not in ("running", "starting", "syncing"):
+                        self._exec(
+                            "UPDATE profiles SET status='cloud_running' WHERE id=?", (pid,))
+                        changed = True
+                    elif (not running_on or running_on == machine) and local_status == "cloud_running":
+                        self._exec(
+                            "UPDATE profiles SET status='stopped' WHERE id=?", (pid,))
+                        changed = True
+
+                # --- Push local profiles not on Firebase ---
+                remote_ids = {rp["id"] for rp in remote_list}
+                all_local = self._query(
+                    "SELECT id, name, proxy, note, automation, canvas_noise, created_at FROM profiles")
+                pushed = 0
+                for lr in all_local:
+                    lid = lr["id"]
+                    if lid not in remote_ids:
+                        meta = {"name": lr["name"], "proxy": lr["proxy"], "note": lr["note"],
+                                "automation": int(lr["automation"]),
+                                "canvas_noise": int(lr["canvas_noise"] or 0),
+                                "created_at": lr["created_at"] or ""}
+                        self.sig_status.emit(f"Pushing '{lr['name']}' to cloud...")
+                        fb_create_profile(self.fb_db, lid, meta)
+                        # Upload profile zip to HF if local dir exists
+                        local_path = os.path.join(profile_dir, lid)
+                        if os.path.isdir(local_path):
+                            self.sig_status.emit(f"Uploading '{lr['name']}' zip to HuggingFace...")
+                            ensure_repo(repo, token)
+                            upload_profile(lid, local_path, repo, token)
+                        pushed += 1
+
+                if changed:
+                    self.sig_render.emit()
+
+                parts = []
+                if added:
+                    parts.append(f"{added} new")
+                if deleted:
+                    parts.append(f"{deleted} removed")
+                if pushed:
+                    parts.append(f"{pushed} pushed")
+                if parts:
+                    self.sig_status.emit(f"Cloud sync: {', '.join(parts)}")
+                else:
+                    self.sig_status.emit("Cloud sync: up to date")
+            except Exception as e:
+                self.sig_status.emit(f"Cloud sync error: {e}")
+            finally:
+                self.sync_btn.setEnabled(True)
+                self.sync_btn.setText("Sync Cloud")
+
+        threading.Thread(target=_do, daemon=True).start()
+
     # --- Settings ---
 
     def _open_settings(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setFixedSize(550, 280)
+        dlg.setFixedSize(550, 560)
         dlg.setModal(True)
         dlg.setStyleSheet(f"background: {C_BG}; color: white;")
 
         layout = QVBoxLayout(dlg)
         layout.setContentsMargins(20, 15, 20, 15)
         layout.setSpacing(8)
+
+        _entry_style = f"""
+            QLineEdit {{ background: {C_CARD}; border: 1px solid {C_BORDER};
+                         border-radius: 6px; padding: 0 10px; color: white; font-size: 12px; }}
+            QLineEdit:focus {{ border-color: {C_ACCENT}; }}
+        """
 
         title_lbl = QLabel("Settings")
         title_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: white; background: transparent;")
@@ -971,10 +1346,7 @@ class App(QMainWindow):
 
         dir_entry = QLineEdit(self.settings.get("profile_dir", DEFAULT_PROFILE_DIR))
         dir_entry.setFixedHeight(34)
-        dir_entry.setStyleSheet(f"""
-            QLineEdit {{ background: {C_CARD}; border: 1px solid {C_BORDER};
-                         border-radius: 6px; padding: 0 10px; color: white; font-size: 12px; }}
-        """)
+        dir_entry.setStyleSheet(_entry_style)
         dir_layout.addWidget(dir_entry, 1)
 
         browse_btn = QPushButton("Browse")
@@ -984,14 +1356,65 @@ class App(QMainWindow):
         dir_layout.addWidget(browse_btn)
         layout.addWidget(dir_frame)
 
+        # --- Cloud Sync ---
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {C_BORDER};")
+        layout.addWidget(sep)
+
+        sync_cb = QCheckBox("Sync profiles to HuggingFace (private repo)")
+        sync_cb.setChecked(self.settings.get("sync_enabled", False))
+        sync_cb.setStyleSheet(f"""
+            QCheckBox {{ color: white; margin-top: 4px; background: transparent; }}
+            QCheckBox::indicator {{ width: 16px; height: 16px; border: 2px solid {C_BORDER}; border-radius: 3px; }}
+            QCheckBox::indicator:checked {{ background: {C_ACCENT}; border-color: {C_ACCENT}; }}
+        """)
+        layout.addWidget(sync_cb)
+
+        repo_lbl = QLabel("HuggingFace Repo ID:")
+        repo_lbl.setStyleSheet(f"color: {C_DIM}; font-size: 12px; background: transparent;")
+        layout.addWidget(repo_lbl)
+
+        repo_entry = QLineEdit(self.settings.get("sync_repo_id", ""))
+        repo_entry.setPlaceholderText("username/repo_name")
+        repo_entry.setFixedHeight(34)
+        repo_entry.setStyleSheet(_entry_style)
+        layout.addWidget(repo_entry)
+
+        token_lbl = QLabel("HuggingFace Token (write scope):")
+        token_lbl.setStyleSheet(f"color: {C_DIM}; font-size: 12px; background: transparent;")
+        layout.addWidget(token_lbl)
+
+        token_entry = QLineEdit(self.settings.get("hf_token", ""))
+        token_entry.setPlaceholderText("hf_...")
+        token_entry.setEchoMode(QLineEdit.EchoMode.Password)
+        token_entry.setFixedHeight(34)
+        token_entry.setStyleSheet(_entry_style)
+        layout.addWidget(token_entry)
+
+        fb_lbl = QLabel("Firebase Service Account JSON:")
+        fb_lbl.setStyleSheet(f"color: {C_DIM}; font-size: 12px; background: transparent;")
+        layout.addWidget(fb_lbl)
+
+        _default_fb = os.path.join(APP_DIR, "auth_files", "firebase.json")
+        fb_entry = QLineEdit(self.settings.get("firebase_path", _default_fb))
+        fb_entry.setFixedHeight(34)
+        fb_entry.setStyleSheet(_entry_style)
+        layout.addWidget(fb_entry)
+
         def save():
             d = dir_entry.text().strip()
             if d:
                 os.makedirs(d, exist_ok=True)
                 self.settings["profile_dir"] = d
-                save_settings(self.settings)
-                self.status_lbl.setText(f"Saved: {d}")
-                dlg.accept()
+            self.settings["sync_enabled"] = sync_cb.isChecked()
+            self.settings["sync_repo_id"] = repo_entry.text().strip()
+            self.settings["hf_token"] = token_entry.text().strip()
+            self.settings["firebase_path"] = fb_entry.text().strip()
+            save_settings(self.settings)
+            self._init_firebase()
+            self.status_lbl.setText("Settings saved")
+            dlg.accept()
 
         save_btn = QPushButton("Save")
         save_btn.setFixedSize(120, 36)
@@ -1025,9 +1448,25 @@ class App(QMainWindow):
         d = dlg.result
         profile_id = str(uuid.uuid4())
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        self.status_lbl.setText(f"Creating '{d['name']}'...")
+        QApplication.processEvents()
+
+        # Sync to Firebase first
+        if self.fb_db and self.settings.get("sync_enabled"):
+            meta = {"name": d["name"], "proxy": d["proxy"], "note": d["note"],
+                    "automation": int(d["automation"]),
+                    "canvas_noise": int(d["canvas_noise"]),
+                    "created_at": now}
+            ok, msg = fb_create_profile(self.fb_db, profile_id, meta)
+            if not ok:
+                QMessageBox.warning(self, "Sync Failed", f"Cannot create on cloud:\n{msg}")
+
+        # Then insert local
         self._exec(
-            "INSERT INTO profiles (id, name, proxy, note, automation, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (profile_id, d["name"], d["proxy"], d["note"], int(d["automation"]), now))
+            "INSERT INTO profiles (id, name, proxy, note, automation, canvas_noise, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (profile_id, d["name"], d["proxy"], d["note"],
+             int(d["automation"]), int(d["canvas_noise"]), now))
         self._render()
         self.status_lbl.setText(f"Created '{d['name']}'")
 
@@ -1037,17 +1476,35 @@ class App(QMainWindow):
         row = self._get_by_id(profile_id)
         if not row:
             return
+        if row["status"] in ("running", "starting", "syncing", "cloud_running"):
+            QMessageBox.warning(self, "Warning", "Cannot edit while profile is running.")
+            return
         dlg = ProfileDialog(self, title="Edit Profile", data={
             "name": row["name"], "proxy": row["proxy"],
             "note": row["note"], "automation": bool(row["automation"]),
+            "canvas_noise": bool(row["canvas_noise"]) if "canvas_noise" in row.keys() else False,
         })
         if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
             return
         d = dlg.result
+
+        self.status_lbl.setText(f"Updating '{d['name']}'...")
+        QApplication.processEvents()
+
+        # Sync to Firebase first (atomic check: not running on another machine)
+        if self.fb_db and self.settings.get("sync_enabled"):
+            meta = {"name": d["name"], "proxy": d["proxy"], "note": d["note"],
+                    "automation": int(d["automation"]),
+                    "canvas_noise": int(d["canvas_noise"])}
+            ok, msg = fb_update_profile(self.fb_db, profile_id, meta)
+            if not ok:
+                QMessageBox.warning(self, "Edit Failed", msg)
+                return
+        # Then update local DB
         proxy_changed = d["proxy"] != row["proxy"]
         self._exec(
-            "UPDATE profiles SET name=?, proxy=?, note=?, automation=?, ip=?, location=?, timezone=? WHERE id=?",
-            (d["name"], d["proxy"], d["note"], int(d["automation"]),
+            "UPDATE profiles SET name=?, proxy=?, note=?, automation=?, canvas_noise=?, ip=?, location=?, timezone=? WHERE id=?",
+            (d["name"], d["proxy"], d["note"], int(d["automation"]), int(d["canvas_noise"]),
              "" if proxy_changed else row["ip"],
              "" if proxy_changed else row["location"],
              "" if proxy_changed else row["timezone"],
@@ -1061,12 +1518,28 @@ class App(QMainWindow):
         row = self._get_by_id(profile_id)
         if not row:
             return
-        if row["status"] in ("running", "starting"):
+        if row["status"] in ("running", "starting", "syncing", "cloud_running"):
             QMessageBox.warning(self, "Warning", "Stop the profile before deleting.")
             return
         reply = QMessageBox.question(self, "Confirm", f"Delete '{row['name']}'?")
         if reply != QMessageBox.StandardButton.Yes:
             return
+
+        self.status_lbl.setText(f"Deleting '{row['name']}'...")
+        QApplication.processEvents()
+
+        # Delete from cloud FIRST
+        sync_enabled, sync_repo, sync_token = self._get_sync()
+        if sync_enabled:
+            ok, msg = fb_delete_profile(self.fb_db, profile_id)
+            if not ok:
+                QMessageBox.warning(self, "Delete Failed", f"Cannot delete on cloud:\n{msg}")
+                return
+            # Delete zip in background (non-blocking, best effort)
+            threading.Thread(target=lambda: delete_profile_zip(profile_id, sync_repo, sync_token),
+                             daemon=True).start()
+
+        # Then delete local
         path = os.path.join(self.settings.get("profile_dir", DEFAULT_PROFILE_DIR), profile_id)
         if os.path.isdir(path):
             try:
@@ -1090,7 +1563,7 @@ class App(QMainWindow):
 
     def _start(self, profile_id):
         row = self._get_by_id(profile_id)
-        if not row or row["status"] in ("running", "starting"):
+        if not row or row["status"] in ("running", "starting", "syncing"):
             return
 
         self._exec("UPDATE profiles SET status='starting' WHERE id=?", (profile_id,))
@@ -1102,26 +1575,108 @@ class App(QMainWindow):
             profile_dir = self.settings.get("profile_dir", DEFAULT_PROFILE_DIR)
             profile_path = os.path.join(profile_dir, profile_id)
 
+            # --- Cloud sync: acquire lock & download ---
+            sync_enabled, sync_repo, sync_token = self._get_sync()
+            if sync_enabled:
+                machine = sync_machine_id()
+                self.sig_status.emit("Acquiring cloud lock...")
+                lock_ok, lock_msg = fb_acquire_lock(self.fb_db, profile_id, machine, meta=row)
+
+                if not lock_ok and "Running on" in lock_msg:
+                    # Profile running on another machine — ask user to force
+                    import threading as _thr
+                    event = _thr.Event()
+                    result = [False]
+
+                    def _on_answer(yes):
+                        result[0] = yes
+                        event.set()
+
+                    self.sig_confirm.emit(
+                        "Profile Running",
+                        f"{lock_msg}\n\nForce take over?",
+                        _on_answer)
+                    event.wait(timeout=60)
+
+                    if not result[0]:
+                        self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
+                        self.sig_render_one.emit(profile_id)
+                        self.sig_status.emit("Start cancelled.")
+                        return
+
+                    # Request remote machine to stop
+                    self.sig_status.emit("Requesting stop on remote machine...")
+                    fb_request_stop(self.fb_db, profile_id, machine)
+
+                    # Poll: wait for remote to release lock
+                    try:
+                        acquired = False
+                        for i in range(15):  # 15 x 2s = 30s
+                            time.sleep(2)
+                            elapsed = (i + 1) * 2
+                            self.sig_status.emit(f"Waiting for remote to stop... ({elapsed}s)")
+                            try:
+                                ok2, _ = fb_acquire_lock(self.fb_db, profile_id, machine, meta=row)
+                            except Exception:
+                                continue
+                            if ok2:
+                                self.sig_status.emit("Take over success")
+                                acquired = True
+                                break
+
+                        if not acquired:
+                            self.sig_status.emit("Force taking over...")
+                            fb_force_acquire_lock(self.fb_db, profile_id, machine)
+
+                        lock_ok = True
+                    except Exception as e:
+                        _abort("Take Over Error", str(e))
+                        return
+
+                if not lock_ok:
+                    self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
+                    self.sig_render_one.emit(profile_id)
+                    self.sig_error.emit("Profile Locked", lock_msg)
+                    self.sig_status.emit("Start cancelled (profile locked).")
+                    return
+
+                self.sig_status.emit("Downloading profile from cloud...")
+                ok, msg = ensure_repo(sync_repo, sync_token)
+                if ok:
+                    dl_ok, dl_msg = download_profile(profile_id, profile_path, sync_repo, sync_token)
+                    if dl_ok:
+                        self.sig_status.emit("Profile downloaded from cloud")
+                    else:
+                        self.sig_status.emit(f"Cloud download skipped: {dl_msg}")
+
+            def _abort(title, msg):
+                """Abort start: reset local status + release Firebase lock."""
+                self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
+                self.sig_render_one.emit(profile_id)
+                self.sig_error.emit(title, msg)
+                self.sig_status.emit("Start failed.")
+                if sync_enabled:
+                    fb_release_lock(self.fb_db, profile_id)
+
             self.sig_status.emit("Checking proxy..." if proxy else "Looking up IP...")
             if proxy:
                 geo = check_proxy(proxy)
                 if not geo:
-                    self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
-                    self.sig_render_one.emit(profile_id)
-                    self.sig_error.emit("Proxy Error", f"Proxy not working:\n{proxy}")
-                    self.sig_status.emit("Start failed.")
+                    _abort("Proxy Error", f"Proxy not working:\n{proxy}")
                     return
             else:
                 geo = get_ip_info(None)
 
             self.sig_status.emit("Building profile...")
-            config = build_gpm_fg(geo, proxy)
+            canvas_noise = bool(row["canvas_noise"]) if "canvas_noise" in row.keys() else False
+            config = build_gpm_fg(geo, proxy, name=row["name"], canvas_noise=canvas_noise)
             write_profile_files(profile_path, config)
 
             args = [
                 CHROME_PATH, f"--user-data-dir={profile_path}",
                 "--password-store=basic", "--gpm-disable-machine-id",
                 "--no-default-browser-check", "--lang=vi",
+                "--disable-features=DeviceBoundSessionCredentials",
             ]
             if proxy:
                 host, port, _, _ = parse_proxy(proxy)
@@ -1143,18 +1698,12 @@ class App(QMainWindow):
             try:
                 proc = subprocess.Popen(args)
             except FileNotFoundError:
-                self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
-                self.sig_render_one.emit(profile_id)
-                self.sig_error.emit("Chrome Not Found",
+                _abort("Chrome Not Found",
                     f"Cannot find Chrome at:\n{CHROME_PATH}\n\n"
                     f"Place ChromiumCore in:\n{os.path.join(APP_DIR, 'browser', 'chrome.exe')}")
-                self.sig_status.emit("Start failed: Chrome not found.")
                 return
             except Exception as e:
-                self._exec("UPDATE profiles SET status='stopped' WHERE id=?", (profile_id,))
-                self.sig_render_one.emit(profile_id)
-                self.sig_error.emit("Start Error", str(e))
-                self.sig_status.emit("Start failed.")
+                _abort("Start Error", str(e))
                 return
 
             now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1185,11 +1734,13 @@ class App(QMainWindow):
         self._exec("UPDATE profiles SET status='stopped', pid=0, cdp_port=0 WHERE id=?", (profile_id,))
         self._render_one(profile_id)
         self.status_lbl.setText(f"Stopped '{row['name']}'")
+        self._upload_on_close(dict(row))
 
     # --- Close ---
 
     def closeEvent(self, event):
-        running = self._query("SELECT id, name, pid FROM profiles WHERE status='running'")
+        running = self._query(
+            "SELECT id, name, pid, proxy, note, automation, created_at FROM profiles WHERE status='running'")
         if not running:
             event.accept()
             return
@@ -1198,28 +1749,63 @@ class App(QMainWindow):
         if len(running) > 5:
             names += f" (+{len(running) - 5} more)"
 
-        msgbox = QMessageBox(self)
-        msgbox.setWindowTitle("Profiles Running")
-        msgbox.setText(
+        reply = QMessageBox.question(
+            self, "Profiles Running",
             f"{len(running)} profile(s) still running:\n{names}\n\n"
-            "Choose an action:"
-        )
-        stop_btn = msgbox.addButton("Stop all and exit", QMessageBox.ButtonRole.AcceptRole)
-        exit_btn = msgbox.addButton("Exit without stopping", QMessageBox.ButtonRole.DestructiveRole)
-        msgbox.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        msgbox.exec()
+            "Stop all and sync to cloud before exit?")
 
-        clicked = msgbox.clickedButton()
-        if clicked == stop_btn:
-            for row in running:
-                kill_pid_tree(row["pid"])
-                self._exec("UPDATE profiles SET status='stopped', pid=0, cdp_port=0 WHERE id=?",
-                           (row["id"],))
-            event.accept()
-        elif clicked == exit_btn:
-            event.accept()
-        else:
+        if reply != QMessageBox.StandardButton.Yes:
             event.ignore()
+            return
+
+        # Kill all browsers
+        for row in running:
+            kill_pid_tree(row["pid"])
+            self._exec("UPDATE profiles SET status='stopped', pid=0, cdp_port=0 WHERE id=?",
+                        (row["id"],))
+
+        # Upload + release lock for each profile
+        sync_enabled, _, _ = self._get_sync()
+        if sync_enabled:
+            threads = []
+            for row in running:
+                r = dict(row)
+                t = threading.Thread(target=lambda r=r: self._upload_on_close_sync(r), daemon=True)
+                t.start()
+                threads.append(t)
+            self.status_lbl.setText(f"Syncing {len(threads)} profile(s) before exit...")
+            for t in threads:
+                t.join(timeout=30)
+
+        event.accept()
+
+    def _upload_on_close_sync(self, row):
+        """Blocking version of _upload_on_close for exit sync."""
+        sync_enabled, sync_repo, sync_token = self._get_sync()
+        if not sync_enabled:
+            return
+        profile_id = row["id"]
+        # Dedup
+        with self._uploading_lock:
+            if profile_id in self._uploading_profiles:
+                return
+            self._uploading_profiles.add(profile_id)
+        profile_dir = self.settings.get("profile_dir", DEFAULT_PROFILE_DIR)
+        profile_path = os.path.join(profile_dir, profile_id)
+        try:
+            if fb_check_deleted(self.fb_db, profile_id):
+                return
+            current_owner = fb_get_running_on(self.fb_db, profile_id)
+            if current_owner and current_owner != sync_machine_id():
+                return
+            upload_profile(profile_id, profile_path, sync_repo, sync_token)
+            fb_release_lock(self.fb_db, profile_id)
+        except Exception:
+            self._exec("UPDATE profiles SET pending_sync='upload_and_release' WHERE id=?",
+                        (profile_id,))
+        finally:
+            with self._uploading_lock:
+                self._uploading_profiles.discard(profile_id)
 
 
 if __name__ == "__main__":

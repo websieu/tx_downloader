@@ -1,0 +1,1 @@
+python path: C:\ProgramData\miniconda3\python.exe

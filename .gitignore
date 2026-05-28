@@ -19,3 +19,5 @@ tests/
 test_*.py
 *.db
 test.py
+debug/
+logs/
